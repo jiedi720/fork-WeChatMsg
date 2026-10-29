@@ -770,8 +770,8 @@ cursor:pointer;color:var(--text);font-family:inherit}
 .thmseg button.on{background:var(--link);color:#fff}
 body.chat .thmseg{right:150px}
 header:has(.thmseg){padding-right:100px}
-.cbtn{right:104px}
-header:has(.cbtn){padding-right:196px}
+.cbtn{right:130px}
+header:has(.cbtn){padding-right:214px}
 .dpcal{top:76px;width:332px}
 .ctt{position:fixed;z-index:60;display:none;background:var(--card);border:1px solid var(--line);
 border-radius:9px;box-shadow:0 10px 28px #0003;padding:9px 10px;font-size:12px;max-width:290px}
