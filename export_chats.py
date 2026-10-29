@@ -45,6 +45,15 @@ if EMOJI_MAP:
     _keys = sorted((k for k in EMOJI_MAP if EMOJI_MAP[k]), key=len, reverse=True)
     EMOJI_RE = re.compile(r'\[(' + '|'.join(map(re.escape, _keys)) + r')\]')
 
+# ---- 表情包（Type 47）：md5 -> export/media/emo/xxx.gif ----
+EMOJI_STK = {}
+_stk_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'export', 'emoji_cdn_map.json')
+if os.path.exists(_stk_path):
+    import json as _json2
+    with open(_stk_path, encoding='utf-8') as _f2:
+        EMOJI_STK = _json2.load(_f2)
+EMOJI_MD5_RE = re.compile(r'\bmd5\s*=\s*"([0-9a-fA-F]{32})"')
+
 
 def emoji_html(text: str) -> str:
     """已 html.escape 过的文本里，把 [表情名] 替换成 <img>。"""
@@ -462,6 +471,16 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
         text = (f'<audio class="au" controls preload="none" src="../media/{html.escape(v["p"])}">'
                 f'</audio><span class="dur">{v["d"]}"</span>')
         kind = 'voice'
+    elif mtype == 47:
+        _m = EMOJI_MD5_RE.search(content or '')
+        _fn = EMOJI_STK.get(_m.group(1).lower()) if _m else None
+        if _fn:
+            text = (f'<a href="../media/{html.escape(_fn)}" data-zoom>'
+                    f'<img class="stk" loading="lazy" src="../media/{html.escape(_fn)}" alt="表情"></a>')
+            kind = 'sticker'
+        else:
+            text = '[表情]'
+            kind = 'placeholder'
     else:
         text = '[' + TYPE_LABEL.get(mtype, f'消息类型{mtype}') + ']'
         if mtype == 34 and display:
@@ -541,6 +560,8 @@ header .meta{font-size:12px;color:var(--sub)}
 .bubble.img.thumb::after{content:"缩略";position:absolute;right:7px;bottom:7px;background:#00000066;color:#fff;
 font-size:10px;line-height:1;padding:3px 5px;border-radius:8px;pointer-events:none}
 .bubble .au{height:32px;max-width:250px;vertical-align:middle;display:inline-block}
+.bubble.stk{padding:0;background:transparent;box-shadow:none}
+.bubble .stk{max-width:160px;max-height:160px;display:block;border-radius:4px;cursor:zoom-in}
 .bubble .dur{font-size:11px;color:var(--sub);margin-left:6px;vertical-align:middle}
 .bubble.img img.pic{display:block;max-width:300px;max-height:300px;height:auto;width:auto;border-radius:4px;cursor:zoom-in}
 .lb{display:none;position:fixed;inset:0;background:#000000cc;z-index:80;align-items:center;justify-content:center;cursor:zoom-out}
@@ -673,8 +694,8 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar='', nav='')
             ava = f'<div class="avatar"{attr_s}><img src="../media/avatar/{m["avatar"]}" alt=""></div>'
         else:
             ava = f'<div class="avatar"{attr_s}>{html.escape(initial)}</div>'
-        bubble_cls = 'bubble' + (' card' if m['kind'] == 'card' else '') + (' link' if m['kind'] == 'link' else '') + (' ph' if m['kind'] == 'placeholder' else '') + (' img' if m['kind'] == 'image' else '') + (' thumb' if m.get('thumb_only') else '')
-        body = m['text'] if m['kind'] in ('image', 'link', 'voice') else emoji_html(html.escape(m['text']))
+        bubble_cls = 'bubble' + (' card' if m['kind'] == 'card' else '') + (' link' if m['kind'] == 'link' else '') + (' ph' if m['kind'] == 'placeholder' else '') + (' img' if m['kind'] == 'image' else '') + (' stk' if m['kind'] == 'sticker' else '') + (' thumb' if m.get('thumb_only') else '')
+        body = m['text'] if m['kind'] in ('image', 'link', 'voice', 'sticker') else emoji_html(html.escape(m['text']))
         blocks.append(f"""<div class="{cls}" id="m{m['id']}">{ava}
 <div class="mid"><div>{who}</div><div class="{bubble_cls}">{body}</div></div>
 <div class="tm">{datetime.fromtimestamp(m['time']).strftime('%H:%M')}</div></div>""")
@@ -1036,7 +1057,7 @@ def main():
 <button class="tbtn" id="thm">🌙</button></header>
 <div class="wrap"><input type="search" id="q" placeholder="搜会话名 / 微信号 / 聊天内容关键字…" autocomplete="off">
 {bk_bar}
-<div class="tabs"><button class="tb on" data-g="all">全部 <b>{len(index_rows)}</b></button><button class="tb" data-g="0">单聊 <b>{n_single}</b></button><button class="tb" data-g="1">群聊 <b>{n_group}</b></button></div>
+<div class="tabs"><button class="tb" data-g="all">全部 <b>{len(index_rows)}</b></button><button class="tb on" data-g="0">单聊 <b>{n_single}</b></button><button class="tb" data-g="1">群聊 <b>{n_group}</b></button></div>
 <table id="t"><thead><tr>
 <th data-col="0">会话<span class="ar"></span></th>
 <th data-col="1" class="sorted desc">消息数<span class="ar">▼</span></th>
@@ -1056,7 +1077,7 @@ const tbody=document.querySelector('#t tbody');
 const ths=[...document.querySelectorAll('#t th')];
 const hits=document.getElementById('hits');
 const state={{col:1,asc:false}};
-let tabG='all';
+let tabG='0';
 const tabs=[...document.querySelectorAll('.tb')];
 tabs.forEach(function(b){{b.addEventListener('click',function(){{
   tabs.forEach(function(x){{x.classList.remove('on');}});
@@ -1125,6 +1146,7 @@ function run(){{
 }}
 q.addEventListener('input',function(){{clearTimeout(timer);timer=setTimeout(run,160);}});
 q.addEventListener('keydown',function(e){{if(e.key==='Enter'){{clearTimeout(timer);run();}}}});
+run();
 </script>
 <script>(function(){{var b=document.getElementById('thm');if(!b)return;
 function set(d){{document.documentElement.setAttribute('data-theme',d?'dark':'light');
