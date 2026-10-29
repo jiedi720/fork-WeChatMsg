@@ -1526,15 +1526,17 @@ document.addEventListener('click',function(e){{
       yg=document.getElementById('yg');
   if(!ybtn||!ypanel||!yg) return;
 
-  /* 聚合：年-月 -> {{会话索引: 条数}}，跳过群聊(cv[2]===1) */
-  var YM={{}}, YTOT={{}};
-  Object.keys(CAL).forEach(function(day){{
-    var ym=day.slice(0,7), o=YM[ym]||(YM[ym]={{}}), lst=CAL[day];
+  /* 聚合：年-月 -> {{会话索引: 条数}}；同时记下该月每个会话最早出现的日期及其分页
+     （点名字要跳到「这个统计时间段开始」的位置，而不是会话末尾） */
+  var YM={{}}, YTOT={{}}, FIRST={{}};
+  Object.keys(CAL).sort().forEach(function(day){{
+    var ym=day.slice(0,7), o=YM[ym]||(YM[ym]={{}}), fo=FIRST[ym]||(FIRST[ym]={{}}), lst=CAL[day];
     for(var i=0;i<lst.length;i++){{
       var ci=lst[i][0], cv=CONV[ci], n=lst[i][1];
-      if(!cv || cv[2]===1) continue;
+      if(!cv || cv[2]===1) continue;              /* 跳过群聊 */
       o[ci]=(o[ci]||0)+n;
       YTOT[ym]=(YTOT[ym]||0)+n;
+      if(!fo[ci]) fo[ci]=[day, lst[i][2]||cv[1]]; /* 日期升序遍历，首见即最早 */
     }}
   }});
 
@@ -1564,11 +1566,14 @@ document.addEventListener('click',function(e){{
         return;
       }}
       var c=CONV[r.best]||['?','#'], w=Math.max(3, Math.round(r.bc/max*100));
-      h+='<div class="yp-r" title="'+esc(c[0])+' · '+r.bc.toLocaleString()+' 条（当月单聊共 '+r.tot.toLocaleString()+' 条）">'
+      var fd=(FIRST[y+'-'+(r.m<10?'0'+r.m:''+r.m)]||{{}})[r.best];
+      var href = fd ? (fd[1]+'#d'+fd[0]) : c[1];
+      h+='<div class="yp-r" title="'+esc(c[0])+' · '+r.bc.toLocaleString()+' 条（当月单聊共 '
+       + r.tot.toLocaleString()+' 条）'+(fd?'，点击从 '+fd[0]+' 开始':'')+'">'
        + '<span class="yp-m">'+r.m+'月</span>'
        + '<span class="yp-b"><i style="width:'+w+'%"></i></span>'
        + '<span class="yp-c">'+r.bc.toLocaleString()+'</span>'
-       + '<a class="yp-n" href="'+c[1]+'">'+esc(c[0])+'</a></div>';
+       + '<a class="yp-n" href="'+href+'">'+esc(c[0])+'</a></div>';
     }});
   }});
   yg.innerHTML=h;
