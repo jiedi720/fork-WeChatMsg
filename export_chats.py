@@ -1546,7 +1546,7 @@ document.addEventListener('click',function(e){{
   }});
 
   var h='';
-  Object.keys(years).sort().reverse().forEach(function(y){{
+  Object.keys(years).sort().forEach(function(y){{
     var rows=[], max=0;
     for(var m=1;m<=12;m++){{
       var key=y+'-'+(m<10?'0'+m:''+m), o=YM[key];
