@@ -760,6 +760,8 @@ a.cd{color:var(--text);opacity:1;font-weight:600;text-decoration:none;border-rad
 a.cd::after{content:"";position:absolute;left:50%;transform:translateX(-50%);bottom:2px;
 width:3px;height:3px;border-radius:50%;background:var(--link)}
 a.cd:hover{background:var(--hover);color:var(--link)}
+a.cd.sel{background:var(--link);color:#fff!important}
+a.cd.sel::after{background:#fff}
 .cd.pad{visibility:hidden}
 .cd.today{background:#07c160;color:#fff!important;border-radius:50%}
 .thmseg{position:absolute;right:16px;top:10px;display:flex;background:var(--card);
@@ -1258,7 +1260,7 @@ def main():
 <div class="thmseg" id="thm"><button data-m="auto" title="跟随系统">🌗</button><button data-m="light" title="浅色模式">☀️</button><button data-m="dark" title="深色模式">🌙</button></div>
 <button class="tbtn cbtn" id="cbtn" title="按日期查找：悬停看当天和谁聊了多少条">📅</button>
 <div class="dpanel dpcal" id="cpanel">
-<div class="ctabs"><button class="ctb on" data-g="all">全部</button><button class="ctb" data-g="0">单聊</button><button class="ctb" data-g="1">群聊</button></div>
+<div class="ctabs"><button class="ctb" data-g="all">全部</button><button class="ctb on" data-g="0">单聊</button><button class="ctb" data-g="1">群聊</button></div>
 <div class="dp-head"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
 <div class="dp-body" id="cg"></div>
 </div>
@@ -1365,24 +1367,51 @@ const CAL=DATA.c||{{}}, CONV=DATA.v||[];
 var cbtn=document.getElementById('cbtn'), cpanel=document.getElementById('cpanel'),
     cg=document.getElementById('cg'), ctt=document.getElementById('ctt');
 function pad2(n){{return n<10?'0'+n:''+n;}}
+var calG='0', pinnedDay=null, pinned=false, hideT=null, cYears=[];
+
+/* 某天在当前视图（全部/单聊/群聊）里是否真的有记录 */
+function dayHas(k,g){{
+  var L=CAL[k]; if(!L||!L.length) return false;
+  if(g==='all') return true;
+  for(var i=0;i<L.length;i++){{
+    var c=CONV[L[i][0]];
+    if(c && String(c[2])===g) return true;
+  }}
+  return false;
+}}
 function cells(y,m){{
   var dow=new Date(y,m-1,1).getDay(), total=new Date(y,m,0).getDate(), h='';
   for(var i=0;i<dow;i++) h+='<span class="cd pad"></span>';
   for(var d=1;d<=total;d++){{
     var k=y+'-'+pad2(m)+'-'+pad2(d);
-    h += CAL[k] ? '<a class="cd" data-d="'+k+'">'+d+'</a>' : '<span class="cd">'+d+'</span>';
+    h += dayHas(k,calG)
+      ? '<a class="cd'+(k===pinnedDay?' sel':'')+'" data-d="'+k+'">'+d+'</a>'
+      : '<span class="cd">'+d+'</span>';
   }}
   return h;
 }}
-(function(){{
+function renderCal(){{
   var ks=Object.keys(CAL).sort();
   if(!ks.length){{cbtn.style.display='none';return;}}
-  var y1=+ks[0].slice(0,4), y2=+ks[ks.length-1].slice(0,4), h='';
-  for(var y=y1;y<=y2;y++) for(var m=1;m<=12;m++)
-    h+='<div class="cmh">'+y+'年'+m+'月</div><div class="cgrid">'+cells(y,m)+'</div>';
+  if(!cYears.length){{
+    for(var y=+ks[0].slice(0,4); y<=+ks[ks.length-1].slice(0,4); y++) cYears.push(y);
+  }}
+  var h='';
+  for(var i=0;i<cYears.length;i++) for(var m=1;m<=12;m++)
+    h+='<div class="cmh">'+cYears[i]+'年'+m+'月</div><div class="cgrid">'+cells(cYears[i],m)+'</div>';
+  var st=cg.scrollTop;
   cg.innerHTML=h;
-}})();
-var calG='all';
+  cg.scrollTop=st;
+  if(pinnedDay){{
+    var a=cg.querySelector('a.cd[data-d="'+pinnedDay+'"]');
+    if(a) tipShow(a);
+    else {{pinnedDay=null; pinned=false; ctt.classList.remove('on');}}
+  }}
+}}
+function scheduleHide(){{
+  clearTimeout(hideT);
+  hideT=setTimeout(function(){{if(!pinned) ctt.classList.remove('on');}},200);
+}}
 function tipShow(a){{
   var k=a.dataset.d;
   var list=(CAL[k]||[]).filter(function(x){{
@@ -1409,26 +1438,59 @@ function tipShow(a){{
   if(top+hh>innerHeight-8) top=Math.max(8,r.top-hh-6);
   ctt.style.left=left+'px'; ctt.style.top=top+'px';
 }}
+renderCal();
+
+/* 悬停预览；点击钉住（浮层保持显示，链接可点） */
 cg.addEventListener('mouseover',function(e){{
   var a=e.target.closest('a.cd');
-  if(a) tipShow(a); else ctt.classList.remove('on');
+  if(a){{clearTimeout(hideT); tipShow(a);}}
+  else if(!pinned){{ctt.classList.remove('on');}}
 }});
-cg.addEventListener('mouseleave',function(){{ctt.classList.remove('on');}});
+cg.addEventListener('mouseleave',function(){{
+  if(pinned){{
+    var a=cg.querySelector('a.cd.sel');
+    if(a) tipShow(a); else ctt.classList.remove('on');
+  }} else scheduleHide();
+}});
+cg.addEventListener('click',function(e){{
+  var a=e.target.closest('a.cd');
+  if(!a) return;
+  e.preventDefault(); e.stopPropagation();
+  var d=a.dataset.d;
+  var prev=cg.querySelector('a.cd.sel');
+  if(prev) prev.classList.remove('sel');
+  if(pinnedDay===d){{                      /* 再点同一天 = 取消选中 */
+    pinnedDay=null; pinned=false; ctt.classList.remove('on'); return;
+  }}
+  a.classList.add('sel');
+  pinnedDay=d; pinned=true;
+  tipShow(a);
+}});
+ctt.addEventListener('mouseenter',function(){{clearTimeout(hideT);}});
+ctt.addEventListener('mouseleave',function(){{if(!pinned) scheduleHide();}});
 cbtn.addEventListener('click',function(e){{
   cpanel.classList.toggle('on');
-  if(cpanel.classList.contains('on')) cg.scrollTop=0;
+  if(cpanel.classList.contains('on')){{
+    var a=pinnedDay ? cg.querySelector('a.cd[data-d="'+pinnedDay+'"]') : null;
+    if(a) a.scrollIntoView({{block:'center'}}); else cg.scrollTop=0;
+  }}
   e.stopPropagation();
 }});
 [...document.querySelectorAll('.ctb')].forEach(function(b){{
   b.addEventListener('click',function(e){{
     [...document.querySelectorAll('.ctb')].forEach(function(x){{x.classList.remove('on');}});
-    b.classList.add('on'); calG=b.dataset.g; ctt.classList.remove('on');
+    b.classList.add('on');
+    calG=b.dataset.g;
+    renderCal();                          /* 按新视图重标日期；钉住的日期若不存在会自动关闭 */
     e.stopPropagation();
   }});
 }});
 document.addEventListener('click',function(e){{
-  if(!e.target.closest('#cpanel') && !e.target.closest('#cbtn')) cpanel.classList.remove('on');
-  if(!e.target.closest('#ctt')) ctt.classList.remove('on');
+  if(!e.target.closest('#cpanel') && !e.target.closest('#cbtn') && !e.target.closest('#ctt')){{
+    cpanel.classList.remove('on');
+    pinnedDay=null; pinned=false;
+    ctt.classList.remove('on');
+  }}
 }});
 </script>
 <script>(function(){{var box=document.getElementById('thm');if(!box)return;
