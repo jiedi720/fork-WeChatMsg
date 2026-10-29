@@ -783,12 +783,13 @@ border-radius:6px;cursor:pointer;color:var(--sub);font-family:inherit}
 .ctb:hover{background:var(--hover)}
 .ctb.on{background:var(--link);border-color:var(--link);color:#fff}
 .ca{width:18px;height:18px;border-radius:4px;object-fit:cover;flex:none;background:var(--chip)}
+span.ca{display:inline-flex;align-items:center;justify-content:center;background:var(--ava);color:#fff;font-size:10px;line-height:1;flex:none}
 .ctr{margin-top:6px;max-height:220px;overflow-y:auto}
 .ctr a{display:flex;align-items:center;justify-content:space-between;gap:12px;
 padding:3px 5px;border-radius:5px;color:var(--text)}
 .ctr a:hover{background:var(--hover);color:var(--link)}
 .ctr a i{font-style:normal;color:var(--sub);flex:none}
-.ctr a span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctr a .cn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ctr .empt{padding:6px 5px;color:var(--sub)}
 .day:target span{background:#f5a623;color:#fff}
 """
@@ -1397,8 +1398,8 @@ function tipShow(a){{
   list.slice(0,10).forEach(function(x){{
     var c=CONV[x[0]]||['?','#'];
     out+='<a href="'+c[1]+'#d'+k+'">'
-       + (c[3] ? '<img class="ca" src="media/avatar/'+c[3]+'" alt="">' : '<span class="ca"></span>')
-       + '<span>'+esc(c[0])+'</span><i>'+x[1]+'</i></a>';
+       + (c[3] ? '<img class="ca" src="media/avatar/'+c[3]+'" alt="">' : '<span class="ca">'+esc([...String(c[0])][0]||'')+'</span>')
+       + '<span class="cn">'+esc(c[0])+'</span><i>'+x[1]+'</i></a>';
   }});
   if(list.length>10) out+='<div class="s" style="padding:4px 5px">还有 '+(list.length-10)+' 个会话…</div>';
   ctt.innerHTML=out+'</div>'; ctt.classList.add('on');
