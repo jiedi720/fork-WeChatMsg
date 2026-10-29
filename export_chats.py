@@ -705,13 +705,14 @@ font-size:13px;background:var(--card);color:var(--text)}
 .tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:8px;background:#1a6fc422;color:var(--link)}
 .tag.g{background:#1f8b3a22;color:#2fa457}
 .tag.s{background:#8a6d2f22;color:var(--gold)}
-.lb{display:inline-block;font-size:10px;line-height:1.6;padding:0 5px;margin-left:4px;
+.ltag{display:inline-block;font-size:10px;line-height:1.6;padding:0 5px;margin-left:4px;
 border-radius:4px;background:var(--chip);color:var(--chip-t);vertical-align:1px}
 .lblsel{margin-left:auto;font-size:12px;padding:4px 8px;border:1px solid var(--line);
 border-radius:14px;background:var(--card);color:var(--text);font-family:inherit;cursor:pointer;max-width:190px}
 td .ellip{display:block;max-width:330px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 td.bkc{color:var(--gold);white-space:nowrap;font-size:12px}
 td.dt{white-space:nowrap}
+@media (min-width:720px){#t{table-layout:fixed}#t th:nth-child(1),#t td:nth-child(1){width:31%}#t th:nth-child(2),#t td:nth-child(2){width:10%}#t th:nth-child(3),#t td:nth-child(3){width:9%}#t th:nth-child(4),#t td:nth-child(4){width:12%}#t th:nth-child(5),#t td:nth-child(5){width:11%}#t th:nth-child(6),#t td:nth-child(6){width:27%}#t td:nth-child(1),#t td:nth-child(4),#t td:nth-child(5){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#t td .ellip{max-width:none}}
 .bkbar{margin:14px 0 10px;padding:10px 14px;background:var(--hi);border:1px solid var(--line);
 border-radius:8px;font-size:13px;color:var(--gold);line-height:1.7}
 .bkbar b{color:var(--gold)}
@@ -1191,7 +1192,7 @@ def main():
         _k = it.get('kind') or ('group' if it['is_group'] else 'single')
         tag = {'group': '<span class="tag g">群</span>',
                'service': '<span class="tag s">服务号</span>'}.get(_k, '<span class="tag">单聊</span>')
-        lbls = ''.join(f'<span class="lb">{html.escape(x)}</span>' for x in it.get('labels') or [])
+        lbls = ''.join(f'<span class="ltag">{html.escape(x)}</span>' for x in it.get('labels') or [])
         if it.get('avatar'):
             ava = f'<img class="ava-sm" src="media/avatar/{it["avatar"]}" alt="">'
         else:
