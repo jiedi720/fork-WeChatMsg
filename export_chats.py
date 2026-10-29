@@ -778,16 +778,19 @@ header:has(.thmseg){padding-right:100px}
 header:has(.cbtn){padding-right:214px}
 .ybtn{right:183px}
 header:has(.ybtn){padding-right:270px}
-.dpy{top:76px;width:344px}
+.dpy{top:76px;width:388px}
 .yp-head{padding:9px 12px;font-size:12px;color:var(--sub);border-bottom:1px solid var(--line)}
-.yp-y{position:sticky;top:0;z-index:2;background:var(--card);font-size:12px;font-weight:700;padding:10px 12px 4px;color:var(--text);border-bottom:1px solid var(--line)}
-.yp-r{display:flex;align-items:center;gap:7px;padding:3px 12px;font-size:12px}
-.yp-r.off{opacity:.4}
-.yp-m{width:32px;flex:none;color:var(--sub);font-variant-numeric:tabular-nums}
-.yp-r .ca{width:16px;height:16px;border-radius:3px;font-size:9px}
-.yp-n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.yp-y{position:sticky;top:0;z-index:2;background:var(--card);display:flex;align-items:baseline;justify-content:space-between;font-size:12px;font-weight:700;padding:11px 12px 5px;color:var(--text);border-bottom:1px solid var(--line)}
+.yp-y i{font-style:normal;font-weight:400;font-size:11px;color:var(--sub)}
+.yp-r{display:flex;align-items:center;gap:7px;padding:2px 12px;font-size:12px}
+.yp-r.off{opacity:.42}
+.yp-m{width:30px;flex:none;color:var(--sub);font-variant-numeric:tabular-nums}
+.yp-b{flex:1;min-width:48px;height:7px;background:var(--chip);border-radius:4px;overflow:hidden}
+.yp-b i{display:block;height:100%;background:var(--link);border-radius:4px;opacity:.82;transition:opacity .12s}
+.yp-r:hover .yp-b i{opacity:1}
+.yp-c{width:46px;flex:none;text-align:right;color:var(--text2);font-variant-numeric:tabular-nums}
+.yp-n{width:88px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
 .yp-n:hover{color:var(--link)}
-.yp-c{flex:none;color:var(--sub);font-variant-numeric:tabular-nums}
 .dpcal{top:76px;width:332px}
 .ctt{position:fixed;z-index:60;display:none;background:var(--card);border:1px solid var(--line);
 border-radius:9px;box-shadow:0 10px 28px #0003;padding:9px 10px;font-size:12px;max-width:290px}
@@ -1517,35 +1520,56 @@ document.addEventListener('click',function(e){{
   }}
 }});
 
-/* ---- 年度统计：每年每月聊得最多的人 ---- */
+/* ---- 年度统计：每年每月聊得最多的人（只算单聊）---- */
 (function(){{
   var ybtn=document.getElementById('ybtn'), ypanel=document.getElementById('ypanel'),
       yg=document.getElementById('yg');
   if(!ybtn||!ypanel||!yg) return;
-  var YM={{}};
+
+  /* 聚合：年-月 -> {{会话索引: 条数}}，跳过群聊(cv[2]===1) */
+  var YM={{}}, YTOT={{}};
   Object.keys(CAL).forEach(function(day){{
     var ym=day.slice(0,7), o=YM[ym]||(YM[ym]={{}}), lst=CAL[day];
-    for(var i=0;i<lst.length;i++){{ o[lst[i][0]]=(o[lst[i][0]]||0)+lst[i][1]; }}
+    for(var i=0;i<lst.length;i++){{
+      var ci=lst[i][0], cv=CONV[ci], n=lst[i][1];
+      if(!cv || cv[2]===1) continue;
+      o[ci]=(o[ci]||0)+n;
+      YTOT[ym]=(YTOT[ym]||0)+n;
+    }}
   }});
+
   var years={{}};
   Object.keys(YM).forEach(function(ym){{
     var y=ym.slice(0,4); (years[y]||(years[y]=[])).push(ym);
   }});
+
   var h='';
   Object.keys(years).sort().reverse().forEach(function(y){{
-    h+='<div class="yp-y">'+y+' 年</div>';
+    var rows=[], max=0;
     for(var m=1;m<=12;m++){{
       var key=y+'-'+(m<10?'0'+m:''+m), o=YM[key];
-      if(!o){{ h+='<div class="yp-r off"><span class="yp-m">'+m+'月</span><span class="yp-n">—</span></div>'; continue; }}
       var best=-1, bc=0, k;
-      for(k in o){{ if(o[k]>bc){{ bc=o[k]; best=+k; }} }}
-      var c=CONV[best]||['?','#'];
-      h+='<div class="yp-r"><span class="yp-m">'+m+'月</span>'
-        + (c[3] ? '<img class="ca" src="media/avatar/'+c[3]+'" alt="">'
-                : '<span class="ca">'+esc([...String(c[0])][0]||'')+'</span>')
-        + '<a class="yp-n" href="'+c[1]+'">'+esc(c[0])+'</a>'
-        + '<span class="yp-c">'+bc.toLocaleString()+'</span></div>';
+      if(o) for(k in o){{ if(o[k]>bc){{ bc=o[k]; best=+k; }} }}
+      if(bc>max) max=bc;
+      rows.push({{m:m, bc:bc, best:best, tot:(YTOT[key]||0)}});
     }}
+    var ytot=rows.reduce(function(a,r){{return a+r.tot;}},0);
+    if(!ytot) return;
+    h+='<div class="yp-y"><span>'+y+' 年</span><i>共 '+ytot.toLocaleString()+' 条</i></div>';
+    rows.forEach(function(r){{
+      if(!r.tot){{
+        h+='<div class="yp-r off"><span class="yp-m">'+r.m+'月</span>'
+         + '<span class="yp-b"><i style="width:0"></i></span>'
+         + '<span class="yp-c">—</span><span class="yp-n"></span></div>';
+        return;
+      }}
+      var c=CONV[r.best]||['?','#'], w=Math.max(3, Math.round(r.bc/max*100));
+      h+='<div class="yp-r" title="'+esc(c[0])+' · '+r.bc.toLocaleString()+' 条（当月单聊共 '+r.tot.toLocaleString()+' 条）">'
+       + '<span class="yp-m">'+r.m+'月</span>'
+       + '<span class="yp-b"><i style="width:'+w+'%"></i></span>'
+       + '<span class="yp-c">'+r.bc.toLocaleString()+'</span>'
+       + '<a class="yp-n" href="'+c[1]+'">'+esc(c[0])+'</a></div>';
+    }});
   }});
   yg.innerHTML=h;
   ybtn.addEventListener('click',function(e){{
@@ -1557,7 +1581,6 @@ document.addEventListener('click',function(e){{
     if(!e.target.closest('#ypanel') && !e.target.closest('#ybtn')) ypanel.classList.remove('on');
   }});
 }})();
-
 </script>
 <script>(function(){{var box=document.getElementById('thm');if(!box)return;
 var mq=matchMedia('(prefers-color-scheme: dark)');
