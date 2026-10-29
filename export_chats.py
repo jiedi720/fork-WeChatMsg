@@ -472,7 +472,12 @@ header{position:sticky;top:0;background:#f2f2f2cc;backdrop-filter:blur(8px);bord
    打开时由页面底部脚本瞬间定位到最末，无动画、无滚动过程 */
 body.chat{height:100vh;overflow:hidden;display:flex;flex-direction:column}
 body.chat header{position:relative;flex:0 0 auto}
-body.chat .scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scroll-behavior:auto}
+body.chat .scroll{flex:1 1 auto;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+/* 消息列表用 column-reverse 承载：视觉上仍是「最旧在上、最新在下」，
+   但滚动原点就是视觉底部 —— 打开瞬间已在最新一条，纯 CSS，不依赖任何脚本 */
+body.chat .wrap{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column-reverse;overscroll-behavior:contain;scroll-behavior:auto;max-width:none;padding:16px}
+/* 滚动条铺满整宽，内容仍收在 860px 内居中；flex:0 0 auto 防止被压缩 */
+body.chat .msg,body.chat .day{flex:0 0 auto;width:100%;max-width:860px;margin-left:auto;margin-right:auto}
 header:has(.dbtn){padding-right:128px}
 header h1{font-size:16px;margin:0 0 2px}
 header .meta{font-size:12px;color:var(--sub)}
@@ -615,25 +620,22 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar=''):
 <div class="mid"><div>{who}</div><div class="{bubble_cls}">{body}</div></div>
 <div class="tm">{datetime.fromtimestamp(m['time']).strftime('%H:%M')}</div></div>""")
 
-    # 正序拼接：最旧的在上、最新的在下，与微信一致
-    parts.extend(blocks)
+    # 倒序写入 DOM：配合 .wrap 的 column-reverse，视觉上仍是「最旧在上、最新在下」，
+    # 而滚动原点天然落在视觉底部 —— 打开即是最新一条，纯 CSS 生效，无需任何脚本
+    parts.extend(reversed(blocks))
 
     parts.append("""</div></div>
 <script>
-/* 打开会话直接停在最新一条：解析完立即定位，不做动画，用户看不到滚动过程。
-   带 #m<id> / #d<日期> 锚点（搜索结果、日历跳转）时交给浏览器定位。 */
-(function(){
-  var sc=document.querySelector('.scroll');
-  if(!sc||location.hash) return;
-  var pinned=true;
-  sc.scrollTop=sc.scrollHeight;
-  sc.addEventListener('wheel',function(){pinned=false;},{passive:true,once:true});
-  sc.addEventListener('touchstart',function(){pinned=false;},{passive:true,once:true});
-  sc.addEventListener('mousedown',function(){pinned=false;},{passive:true,once:true});
-  addEventListener('hashchange',function(){pinned=false;});
-  addEventListener('load',function(){ if(pinned&&!location.hash) sc.scrollTop=sc.scrollHeight; });
-})();
-</script>
+/* 只在带锚点（#m消息 / #d日期）时跳转；没有锚点就停在原生位置——最新一条 */
+function jumpHash(){
+  if(!location.hash) return;
+  var el=null;
+  try{ el=document.querySelector(location.hash); }catch(e){ return; }
+  if(el) el.scrollIntoView({block:'center'});
+}
+jumpHash();
+addEventListener('load',jumpHash);
+addEventListener('hashchange',jumpHash);
 <div class="ucard" id="ucard"></div>
 <div class="lb" id="lb"><img alt=""></div>
 <script>
