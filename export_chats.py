@@ -592,6 +592,8 @@ header .meta{font-size:12px;color:var(--sub)}
 .avatar{width:34px;height:34px;border-radius:4px;background:var(--ava);flex:0 0 34px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;overflow:hidden;cursor:pointer}
 .avatar img{width:100%;height:100%;object-fit:cover}
 .ava-sm{width:22px;height:22px;border-radius:4px;object-fit:cover;vertical-align:-6px;margin-right:6px}
+.ava-ph{display:inline-flex;width:22px;height:22px;border-radius:4px;background:var(--ava);color:#fff;
+font-size:12px;line-height:1;align-items:center;justify-content:center;vertical-align:-6px;margin-right:6px}
 .bubble{max-width:min(560px,72vw);background:var(--other);border-radius:6px;padding:8px 12px;white-space:pre-wrap;word-break:break-word;box-shadow:0 0 1px #0001}
 .mid{min-width:0}
 .msg.me .bubble{background:var(--me)}
@@ -720,12 +722,19 @@ header:has(.cbtn){padding-right:104px}
 border-radius:9px;box-shadow:0 10px 28px #0003;padding:9px 10px;font-size:12px;max-width:290px}
 .ctt.on{display:block}
 .ctt .s{color:var(--sub)}
+.ctabs{display:flex;gap:6px;padding:8px 8px 2px}
+.ctb{flex:1;font-size:12px;padding:4px 0;border:1px solid var(--line);background:transparent;
+border-radius:6px;cursor:pointer;color:var(--sub);font-family:inherit}
+.ctb:hover{background:var(--hover)}
+.ctb.on{background:var(--link);border-color:var(--link);color:#fff}
+.ca{width:18px;height:18px;border-radius:4px;object-fit:cover;flex:none;background:var(--chip)}
 .ctr{margin-top:6px;max-height:220px;overflow-y:auto}
 .ctr a{display:flex;align-items:center;justify-content:space-between;gap:12px;
 padding:3px 5px;border-radius:5px;color:var(--text)}
 .ctr a:hover{background:var(--hover);color:var(--link)}
 .ctr a i{font-style:normal;color:var(--sub);flex:none}
-.ctr a span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctr a span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctr .empt{padding:6px 5px;color:var(--sub)}
 .day:target span{background:#f5a623;color:#fff}
 """
 
@@ -1121,8 +1130,10 @@ def main():
     tr = []
     for it in index_rows:
         tag = '<span class="tag g">群</span>' if it['is_group'] else '<span class="tag">单聊</span>'
-        ava = (f'<img class="ava-sm" src="media/avatar/{it["avatar"]}" alt="">'
-               if it.get('avatar') else '')
+        if it.get('avatar'):
+            ava = f'<img class="ava-sm" src="media/avatar/{it["avatar"]}" alt="">'
+        else:
+            ava = f'<span class="ava-ph">{html.escape(it["name"][:1])}</span>'
         has_pc = it['talker'] in pc_talkers
         has_bk = it['talker'] in bk_talkers
         src = '本机+备份' if (has_pc and has_bk) else ('仅备份' if has_bk else '本机')
@@ -1159,7 +1170,8 @@ def main():
     if len(srch_recs) > 300000:
         srch_recs.sort(key=lambda r: -r[1])
         del srch_recs[300000:]
-    conv_list = [[it['name'], it['file']] for it in index_rows]
+    conv_list = [[it['name'], it['file'], 1 if it['is_group'] else 0, it.get('avatar', '')]
+                 for it in index_rows]
     data_json = json.dumps({'f': srch_files, 'r': srch_recs,
                             'c': CAL, 'v': conv_list},
                            ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
@@ -1170,6 +1182,7 @@ def main():
 <button class="tbtn" id="thm">🌙</button>
 <button class="tbtn cbtn" id="cbtn" title="按日期查找：悬停看当天和谁聊了多少条">📅</button>
 <div class="dpanel dpcal" id="cpanel">
+<div class="ctabs"><button class="ctb on" data-g="all">全部</button><button class="ctb" data-g="0">单聊</button><button class="ctb" data-g="1">群聊</button></div>
 <div class="dp-head"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
 <div class="dp-body" id="cg"></div>
 </div>
@@ -1289,13 +1302,24 @@ function cells(y,m){{
     h+='<div class="cmh">'+y+'年'+m+'月</div><div class="cgrid">'+cells(y,m)+'</div>';
   cg.innerHTML=h;
 }})();
+var calG='all';
 function tipShow(a){{
-  var k=a.dataset.d, list=(CAL[k]||[]).slice().sort(function(p,q){{return q[1]-p[1];}});
+  var k=a.dataset.d;
+  var list=(CAL[k]||[]).filter(function(x){{
+    if(calG==='all') return true;
+    var c=CONV[x[0]]||[];
+    return String(c[2])===calG;
+  }}).sort(function(p,q){{return q[1]-p[1];}});
   var tot=0; list.forEach(function(x){{tot+=x[1];}});
   var out='<div><b>'+k+'</b> <span class="s">'+list.length+' 个会话 · '+tot+' 条</span></div><div class="ctr">';
+  if(!list.length){{
+    out+='<div class="empt">这天没有'+(calG==='0'?'单聊':calG==='1'?'群聊':'')+'记录</div>';
+  }}
   list.slice(0,10).forEach(function(x){{
     var c=CONV[x[0]]||['?','#'];
-    out+='<a href="'+c[1]+'#d'+k+'"><span>'+esc(c[0])+'</span><i>'+x[1]+'</i></a>';
+    out+='<a href="'+c[1]+'#d'+k+'">'
+       + (c[3] ? '<img class="ca" src="media/avatar/'+c[3]+'" alt="">' : '<span class="ca"></span>')
+       + '<span>'+esc(c[0])+'</span><i>'+x[1]+'</i></a>';
   }});
   if(list.length>10) out+='<div class="s" style="padding:4px 5px">还有 '+(list.length-10)+' 个会话…</div>';
   ctt.innerHTML=out+'</div>'; ctt.classList.add('on');
@@ -1314,6 +1338,13 @@ cbtn.addEventListener('click',function(e){{
   cpanel.classList.toggle('on');
   if(cpanel.classList.contains('on')) cg.scrollTop=0;
   e.stopPropagation();
+}});
+[...document.querySelectorAll('.ctb')].forEach(function(b){{
+  b.addEventListener('click',function(e){{
+    [...document.querySelectorAll('.ctb')].forEach(function(x){{x.classList.remove('on');}});
+    b.classList.add('on'); calG=b.dataset.g; ctt.classList.remove('on');
+    e.stopPropagation();
+  }});
 }});
 document.addEventListener('click',function(e){{
   if(!e.target.closest('#cpanel') && !e.target.closest('#cbtn')) cpanel.classList.remove('on');

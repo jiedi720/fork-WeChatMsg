@@ -25,12 +25,22 @@ def avatar_file(username: str) -> str:
     return os.path.join(OUT_DIR, hashlib.md5(username.encode('utf-8')).hexdigest() + '.jpg')
 
 
+BACKUP_MSG = r'D://Temp//wxold//BackupMSG.db'
+
+
 def wanted_usernames():
     names = set()
     conn = sqlite3.connect(os.path.join(MSG_DIR, 'MSG.db'))
     for (t,) in conn.execute('SELECT DISTINCT StrTalker FROM MSG'):
         if t:
             names.add(t)
+    # 备份独有的会话也要头像（它们在本机 MicroMsg.db 里同样有 headImgUrl）
+    if os.path.exists(BACKUP_MSG):
+        b = sqlite3.connect('file:%s?mode=ro' % BACKUP_MSG.replace('\\', '/'), uri=True)
+        for (t,) in b.execute('SELECT DISTINCT StrTalker FROM MSG'):
+            if t:
+                names.add(t)
+        b.close()
     for (talker, be) in conn.execute(
             "SELECT StrTalker, BytesExtra FROM MSG WHERE IsSender=0 AND StrTalker LIKE '%@chatroom'"):
         for m in NAME_RE.finditer(be or b''):
