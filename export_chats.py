@@ -129,6 +129,7 @@ def read_self_wxid():
 
 MEDIA_ROOT = ''
 BK_MEDIA = {}
+BF_MEDIA = {}
 VOICE_MAP = {}
 _IMG_SIZE = {}
 
@@ -443,8 +444,19 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
         text = '[名片] ' + (content or '')[:40]
         kind = 'card'
     elif mtype == 3:
+        _base = media_bk[:-7] if media_bk.endswith('__thumb') else media_bk
+        bfimg = BF_MEDIA.get(_base) if _base else None
         bkimg = BK_MEDIA.get(media_bk) if media_bk else None
-        if bkimg:
+        if bfimg:
+            # 列表里先放缩略图（刷得快），点开看的是备份里的真原图
+            src = bkimg or bfimg
+            dim = image_size(src)
+            dim_s = f' width="{dim[0]}" height="{dim[1]}"' if dim else ''
+            text = (f'<a href="../media/{html.escape(bfimg)}" data-zoom>'
+                    f'<img class="pic" loading="lazy"{dim_s} src="../media/{html.escape(src)}" alt="图片"></a>')
+            kind = 'image'
+            thumb_only = False
+        elif bkimg:
             dim = image_size(bkimg)
             dim_s = f' width="{dim[0]}" height="{dim[1]}"' if dim else ''
             text = (f'<a href="../media/{html.escape(bkimg)}" data-zoom>'
@@ -819,7 +831,7 @@ def main():
         sys.exit(f'找不到 {msg_db}，请先解密数据库')
 
     contacts = load_contacts(mm_db) if os.path.exists(mm_db) else {}
-    global MEDIA_ROOT, BK_MEDIA, VOICE_MAP
+    global MEDIA_ROOT, BK_MEDIA, BF_MEDIA, VOICE_MAP
     MEDIA_ROOT = os.path.join(out_dir, 'media')
     _vmap = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'voice_map.json')
     if os.path.exists(_vmap):
@@ -833,6 +845,12 @@ def main():
         with open(_bkmap, encoding='utf-8') as _f:
             BK_MEDIA.update(_jm.load(_f))
         print('备份图片: %d 张' % len(BK_MEDIA))
+    _bfmap = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bf_media_map.json')
+    if os.path.exists(_bfmap):
+        import json as _jm2
+        with open(_bfmap, encoding='utf-8') as _f2:
+            BF_MEDIA.update(_jm2.load(_f2))
+        print('备份原图: %d 张' % len(BF_MEDIA))
     media_idx = build_media_index(MEDIA_ROOT)
     avatar_map = build_avatar_map(msg_dir, os.path.join(out_dir, 'media', 'avatar'))
     self_wxid = read_self_wxid()

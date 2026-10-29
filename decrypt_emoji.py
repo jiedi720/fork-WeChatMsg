@@ -39,8 +39,10 @@ MAGICS = [
     (b'BM', 'bmp'),
 ]
 
-MAX_BYTES = 700 * 1024        # 单张上限，超过先退缩略图，再不行本地抽帧压缩
-THUMB_W = 240                 # 压缩后的最大宽度
+MAX_GIF = 900 * 1024          # 动图上限：超过就逐帧缩放，但仍是动图
+MAX_STATIC = 1600 * 1024      # 静态图上限：超过就缩到 STATIC_W
+STK_W = 160                   # 页面里表情的显示宽度，缩放目标就是它
+STATIC_W = 1000
 HEADERS = {'User-Agent': 'MicroMessenger Client', 'Referer': 'https://wx.qq.com/'}
 
 
@@ -51,22 +53,48 @@ def sniff(data):
     return None
 
 
-def shrink(data):
-    """把过大的动图压成首帧静态 png（表情在聊天窗口里也就是小图）。"""
-    try:
-        import io
-        from PIL import Image
-        im = Image.open(io.BytesIO(data))
-        im.seek(0)
-        im = im.convert('RGBA')
-        w, h = im.size
-        if w > THUMB_W:
-            im = im.resize((THUMB_W, max(1, round(h * THUMB_W / w))), Image.LANCZOS)
-        buf = io.BytesIO()
-        im.save(buf, 'PNG', optimize=True)
-        return buf.getvalue(), 'png'
-    except Exception:
+def shrink_gif(data):
+    """GIF / 动图 webp：逐帧缩放后重存 GIF —— 保留动画，只是变小。
+
+    帧数太多时隔帧取，并把 duration 翻倍，总时长不变，体积再砍一半。
+    """
+    import io
+    from PIL import Image
+    im = Image.open(io.BytesIO(data))
+    n = getattr(im, 'n_frames', 1) or 1
+    step = 1 if n <= 60 else 2
+    frames, durs = [], []
+    for i in range(0, n, step):
+        im.seek(i)
+        f = im.convert('RGBA')
+        w, h = f.size
+        if w > STK_W:
+            f = f.resize((STK_W, max(1, round(h * STK_W / w))), Image.LANCZOS)
+        frames.append(f)
+        d = im.info.get('duration', 80) or 80
+        durs.append(min(1000, d * step))
+    if not frames:
         return data, None
+    buf = io.BytesIO()
+    frames[0].save(buf, 'GIF', save_all=True, append_images=frames[1:],
+                   duration=durs, loop=0, disposal=2, optimize=True)
+    return buf.getvalue(), 'gif'
+
+
+def shrink_static(data):
+    """静态大图（jpg/png）：等比缩到 STATIC_W，质量不掉太狠。"""
+    import io
+    from PIL import Image
+    im = Image.open(io.BytesIO(data))
+    w, h = im.size
+    if w > STATIC_W:
+        im = im.resize((STATIC_W, max(1, round(h * STATIC_W / w))), Image.LANCZOS)
+    buf = io.BytesIO()
+    if im.mode in ('RGBA', 'P', 'LA'):
+        im.convert('RGBA').save(buf, 'PNG', optimize=True)
+        return buf.getvalue(), 'png'
+    im.convert('RGB').save(buf, 'JPEG', quality=85, optimize=True)
+    return buf.getvalue(), 'jpg'
 
 
 def collect(md5_urls, db, only_existing=False):
@@ -122,7 +150,9 @@ def main():
     ap.add_argument('--out', default=os.path.join('export', 'media', 'emo'))
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--threads', type=int, default=12)
+    ap.add_argument('--force', action='store_true', help='忽略已有产物，全部重下（换压缩策略后用）')
     args = ap.parse_args()
+    force = args.force
 
     out_dir = os.path.abspath(args.out)
     os.makedirs(out_dir, exist_ok=True)
@@ -159,7 +189,7 @@ def main():
         return s
 
     def fetch_one(md5):
-        if md5 in have:
+        if (not force) and md5 in have:
             with lock:
                 stat['skip'] += 1
             return md5, have[md5]
@@ -177,11 +207,13 @@ def main():
                     ext = sniff(data)
                     if not ext or len(data) < 64:
                         break
-                    # 原图过大且还有缩略图可退，改用缩略图
-                    if full and len(data) > MAX_BYTES and rec['thb'] and url != rec['thb']:
+                    anim = ext in ('gif', 'webp')
+                    cap = MAX_GIF if anim else MAX_STATIC
+                    # 静态图过大且还有缩略图可退，改用缩略图
+                    if full and (not anim) and len(data) > cap and rec['thb'] and url != rec['thb']:
                         break
-                    if len(data) > MAX_BYTES:
-                        nd, ne = shrink(data)
+                    if len(data) > cap:
+                        nd, ne = (shrink_gif if anim else shrink_static)(data)
                         if ne:
                             data, ext = nd, ne
                     name = f'{md5}.{ext}'
