@@ -120,6 +120,7 @@ def read_self_wxid():
 
 MEDIA_ROOT = ''
 BK_MEDIA = {}
+VOICE_MAP = {}
 _IMG_SIZE = {}
 
 
@@ -456,6 +457,11 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
             else:
                 text = '[图片]'
                 kind = 'placeholder'
+    elif mtype == 34 and media_bk and VOICE_MAP.get(media_bk):
+        v = VOICE_MAP[media_bk]
+        text = (f'<audio class="au" controls preload="none" src="../media/{html.escape(v["p"])}">'
+                f'</audio><span class="dur">{v["d"]}"</span>')
+        kind = 'voice'
     else:
         text = '[' + TYPE_LABEL.get(mtype, f'消息类型{mtype}') + ']'
         if mtype == 34 and display:
@@ -534,6 +540,8 @@ header .meta{font-size:12px;color:var(--sub)}
 .bubble.img{padding:3px;background:transparent;box-shadow:none;position:relative}
 .bubble.img.thumb::after{content:"缩略";position:absolute;right:7px;bottom:7px;background:#00000066;color:#fff;
 font-size:10px;line-height:1;padding:3px 5px;border-radius:8px;pointer-events:none}
+.bubble .au{height:32px;max-width:250px;vertical-align:middle;display:inline-block}
+.bubble .dur{font-size:11px;color:var(--sub);margin-left:6px;vertical-align:middle}
 .bubble.img img.pic{display:block;max-width:300px;max-height:300px;height:auto;width:auto;border-radius:4px;cursor:zoom-in}
 .lb{display:none;position:fixed;inset:0;background:#000000cc;z-index:80;align-items:center;justify-content:center;cursor:zoom-out}
 .lb.on{display:flex}
@@ -666,7 +674,7 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar='', nav='')
         else:
             ava = f'<div class="avatar"{attr_s}>{html.escape(initial)}</div>'
         bubble_cls = 'bubble' + (' card' if m['kind'] == 'card' else '') + (' link' if m['kind'] == 'link' else '') + (' ph' if m['kind'] == 'placeholder' else '') + (' img' if m['kind'] == 'image' else '') + (' thumb' if m.get('thumb_only') else '')
-        body = m['text'] if m['kind'] in ('image', 'link') else emoji_html(html.escape(m['text']))
+        body = m['text'] if m['kind'] in ('image', 'link', 'voice') else emoji_html(html.escape(m['text']))
         blocks.append(f"""<div class="{cls}" id="m{m['id']}">{ava}
 <div class="mid"><div>{who}</div><div class="{bubble_cls}">{body}</div></div>
 <div class="tm">{datetime.fromtimestamp(m['time']).strftime('%H:%M')}</div></div>""")
@@ -790,8 +798,14 @@ def main():
         sys.exit(f'找不到 {msg_db}，请先解密数据库')
 
     contacts = load_contacts(mm_db) if os.path.exists(mm_db) else {}
-    global MEDIA_ROOT, BK_MEDIA
+    global MEDIA_ROOT, BK_MEDIA, VOICE_MAP
     MEDIA_ROOT = os.path.join(out_dir, 'media')
+    _vmap = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'voice_map.json')
+    if os.path.exists(_vmap):
+        import json as _jv
+        with open(_vmap, encoding='utf-8') as _f:
+            VOICE_MAP.update(_jv.load(_f))
+        print('备份语音: %d 条' % len(VOICE_MAP))
     _bkmap = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bk_media_map.json')
     if os.path.exists(_bkmap):
         import json as _jm
@@ -930,13 +944,17 @@ def main():
                                'chats/' + fn])
             # 搜索索引只取每会话最近 800 条：93 万条全量会让 index.html 涨到 60MB+
             for m in part[-800:]:
-                body = '[图片]' if m['kind'] == 'image' else m['text']
+                body = {'image': '[图片]', 'voice': '[语音]'}.get(m['kind'], m['text'])
                 srch_recs.append([fi, m['time'], m['sender'] or name, body[:120], m['id']])
             for m in part:
-                val = '[图片]' if m['kind'] == 'image' else re.sub(r'<[^>]+>', '', m['text'])
+                val = {'image': '[图片]', 'voice': '[语音]'}.get(
+                    m['kind'], re.sub(r'<[^>]+>', '', m['text']))
                 csv_w.writerow([name, talker, m['sender'] or name, '是' if m['is_sender'] else '否',
                                 fmt_ts(m['time']), m['type'], val])
-        last_plain = '[图片]' if lastm['kind'] == 'image' else re.sub(r'<[^>]+>', '', lastm['text'])
+        if lastm['kind'] in ('image', 'voice'):
+            last_plain = '[图片]' if lastm['kind'] == 'image' else '[语音]'
+        else:
+            last_plain = re.sub(r'<[^>]+>', '', lastm['text'])
         index_rows.append({
             'name': name,
             'talker': talker,

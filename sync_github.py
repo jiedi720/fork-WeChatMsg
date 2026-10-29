@@ -19,7 +19,7 @@ FILES = [
     'make_previews.py', '_decrypt_all.py', '_merge.py', 'wx4_tool.py',
     'wx4_findkey.py', 'start.bat', 'refresh_images.bat', 'emoji_map.json',
     'sync_github.py', 'find_backup_key.py', 'decrypt_backup.py', 'backup_inventory.py',
-    'parse_backup_text.py', 'import_backup.py', 'decrypt_backup_media.py',
+    'parse_backup_text.py', 'import_backup.py', 'decrypt_backup_media.py', 'decrypt_backup_voice.py',
 ]
 
 def sanitize(text):
