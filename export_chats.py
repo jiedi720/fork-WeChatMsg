@@ -356,15 +356,23 @@ def display_name(uname, contacts):
 
 def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, self_wxid=''):
     (local_id, mtype, sub_type, is_sender, create_time, talker,
-     content, display, bytes_extra, compress) = row
+     content, display, bytes_extra, compress) = row[:10]
+
+    sender_hint = row[10] if len(row) > 10 else ''
+    if sender_hint == talker:      # 群消息里取不到发送者时退回，不显示群号当人名
+        sender_hint = ''
 
     sender = ''
     sender_uname = talker
     if talker.endswith('@chatroom') and not is_sender:
-        cands = [u for u in hexdump_strings(bytes_extra) if u != talker]
-        if cands:
-            sender_uname = cands[0]
+        if sender_hint:
+            sender_uname = sender_hint
             sender = display_name(sender_uname, contacts)
+        else:
+            cands = [u for u in hexdump_strings(bytes_extra) if u != talker]
+            if cands:
+                sender_uname = cands[0]
+                sender = display_name(sender_uname, contacts)
     if is_sender and self_wxid:
         sender_uname = self_wxid
     avatar = (avatar_map or {}).get(sender_uname, '')
@@ -444,6 +452,8 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
         kind = 'placeholder'
 
     cinfo = contacts.get(sender_uname) or contacts.get(talker) or {}
+    if not text:
+        text = '[空消息]'
     return {
         'id': local_id,
         'time': create_time,
@@ -531,6 +541,7 @@ td.dt{white-space:nowrap}
 .bkbar{margin:14px 0 10px;padding:10px 14px;background:#fff8e6;border:1px solid #f0d9a8;border-radius:8px;font-size:13px;color:#7a5a12;line-height:1.7}
 .bkbar b{color:#c07000}
 .bkbar .warn{display:block;margin-top:2px;color:#b1351f;font-size:12px}
+.bkbar .note{display:block;margin-top:2px;color:#8a6d2f;font-size:12px}
 details#bkd{margin:0 0 12px;font-size:13px}
 details#bkd summary{cursor:pointer;padding:8px 0;color:#1a6fc4}
 #bt th{cursor:default}
@@ -575,7 +586,7 @@ a.cd:hover{background:#eef3fa;color:#1a6fc4}
 """
 
 
-def write_chat_page(path, talker, msgs, contacts, self_label, avatar=''):
+def write_chat_page(path, talker, msgs, contacts, self_label, avatar='', nav=''):
     name = display_name(talker, contacts)
     h_ava = f'<img class="ava-sm" src="../media/avatar/{avatar}" alt="">' if avatar else ''
 
@@ -592,7 +603,7 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar=''):
     parts = [f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>{html.escape(name)}</title><style>{CSS}</style></head><body class="chat">
 <header><h1>{h_ava}{html.escape(name)}</h1>
-<div class="meta">{html.escape(talker)} · 共 {len(msgs)} 条 · {fmt_ts(msgs[0]['time'])} ~ {fmt_ts(msgs[-1]['time'])} · <a href="../index.html">返回会话列表</a></div>
+<div class="meta">{html.escape(talker)} · 共 {len(msgs)} 条 · {fmt_ts(msgs[0]['time'])} ~ {fmt_ts(msgs[-1]['time'])} · <a href="../index.html">返回会话列表</a>{nav}</div>
 <button class="dbtn" id="dbtn">📅 按日期查找</button>
 <div class="dpanel" id="dpanel">
 <div class="dp-head"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
@@ -610,7 +621,7 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar=''):
         if m['kind'] == 'system':
             cls = 'msg system'
         initial = (m['sender'] or name)[:1]
-        who = '' if m['is_sender'] or m['kind'] == 'system' else f'<div class="who">{html.escape(m["sender"] or name)}</div>'
+        who = '' if (m['is_sender'] or m['kind'] == 'system' or not m['sender']) else f'<div class="who">{html.escape(m["sender"])}</div>'
         # 头像上挂联系人信息，点击时弹卡
         attrs = []
         for key, val in (('data-n', m.get('nick', '')), ('data-r', m.get('remark', '')),
@@ -645,6 +656,7 @@ function jumpHash(){
 jumpHash();
 addEventListener('load',jumpHash);
 addEventListener('hashchange',jumpHash);
+</script>
 <div class="ucard" id="ucard"></div>
 <div class="lb" id="lb"><img alt=""></div>
 <script>
@@ -727,7 +739,11 @@ dpanel.addEventListener('click',function(e){
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--msg-dir', default=os.path.join('app', 'DataBase', 'Msg'))
+    ap.add_argument('--extra-msg', default=r'D:\Temp\wxold\BackupMSG.db',
+                    help='手机备份解出的消息库（parse_backup_text.py + import_backup.py 产出）')
     ap.add_argument('--out', default='export')
+    ap.add_argument('--limit', type=int, default=0, help='只导出消息最多的前 N 个会话（调试用）')
+    ap.add_argument('--clean', action='store_true', help='导出前删除旧的会话页（会触发批量删除确认）')
     args = ap.parse_args()
 
     msg_dir = os.path.abspath(args.msg_dir)
@@ -746,56 +762,141 @@ def main():
     print(f'图片索引: {len(media_idx)} 个 · 头像: {len(avatar_map)} 个 · 本人: {self_wxid}')
     conn = sqlite3.connect(msg_db)
     rows = conn.execute("""
-        SELECT localId, Type, SubType, IsSender, CreateTime, StrTalker, StrContent, DisplayContent, BytesExtra, CompressContent
+        SELECT localId, Type, SubType, IsSender, CreateTime, StrTalker, StrContent, DisplayContent, BytesExtra, CompressContent, MsgSvrID
         FROM MSG ORDER BY StrTalker, CreateTime, localId
     """).fetchall()
+    pc_talkers = {r[5] for r in rows}
+    bk_talkers = set()
 
-    by_talker = {}
+    # 先按会话存「原始行」，不提前 render：93 万条 rec dict 会吃掉 1GB+ 内存
+    raw = {}
+    from collections import Counter
+    seen_svr = Counter()
+    seen_key = Counter()
     for r in rows:
         talker = r[5] or ''
-        rec = render_message((r[0], r[1], r[2], r[3], r[4], talker, r[6], r[7], r[8], r[9]),
-                             contacts, None, media_idx, avatar_map, self_wxid)
-        by_talker.setdefault(talker, []).append(rec)
+        svr = r[10] or 0
+        if svr:
+            seen_svr[(talker, svr)] += 1
+        seen_key[(talker, r[4], r[1], hashlib.md5((r[6] or '').encode('utf-8', 'ignore')).hexdigest()[:8])] += 1
+        raw.setdefault(talker, []).append(
+            (r[0], r[1], r[2], r[3], r[4], talker, r[6], r[7], r[8], r[9], ''))
     conn.close()
+    print('本机: %d 条' % len(rows))
+
+    # ---- 手机备份（BAK_0_TEXT 解出的正文）----
+    if args.extra_msg and os.path.exists(args.extra_msg):
+        ex = sqlite3.connect(args.extra_msg)
+        try:
+            add = 0
+            dup = 0
+            lid = 10 ** 8
+            for talker, ty, is_sender, ts, content, svr, hint in ex.execute(
+                    'SELECT StrTalker, Type, IsSender, CreateTime, StrContent, MsgSvrID, SenderHint '
+                    'FROM MSG ORDER BY StrTalker, CreateTime'):
+                bk_talkers.add(talker)
+                if svr and seen_svr.get((talker, svr)):
+                    seen_svr[(talker, svr)] -= 1
+                    dup += 1
+                    continue
+                k = (talker, ts, ty, hashlib.md5((content or '').encode('utf-8', 'ignore')).hexdigest()[:8])
+                if seen_key.get(k):
+                    seen_key[k] -= 1
+                    dup += 1
+                    continue
+                lid += 1
+                raw.setdefault(talker, []).append(
+                    (lid, ty, 0, is_sender, ts, talker, content, '', None, None, hint))
+                add += 1
+            print('备份: 新增 %d 条 · 与本机重复跳过 %d 条' % (add, dup))
+        finally:
+            ex.close()
+        # 备份里的会话昵称补齐（本机通讯录里没有的群/人）
+        try:
+            ex = sqlite3.connect(args.extra_msg)
+            for talker, nick in ex.execute('SELECT talker, nick FROM BkSession'):
+                if not nick:
+                    continue
+                c = contacts.setdefault(talker, {'alias': '', 'nick': '', 'remark': ''})
+                if not c.get('nick'):
+                    c['nick'] = nick
+            ex.close()
+        except sqlite3.OperationalError:
+            pass
+
+    for talker in raw:
+        raw[talker].sort(key=lambda r: (r[4], r[0]))
 
     os.makedirs(out_dir, exist_ok=True)
     chat_dir = os.path.join(out_dir, 'chats')
     os.makedirs(chat_dir, exist_ok=True)
-    # 清掉上一次导出的会话页，避免会话改名/数量变化后留下旧文件
-    for f in sorted(os.listdir(chat_dir)):
-        if re.match(r'^\d{3}_.*\.html$', f):
-            try:
-                os.remove(os.path.join(chat_dir, f))
-            except OSError:
-                pass
+    # 旧会话页不再逐个删除（批量删除会触发安全确认）；直接覆盖同名文件，
+    # 需要彻底清残留时把整个 chats 目录改名即可
+    if args.clean:
+        for f in sorted(os.listdir(chat_dir)):
+            if re.match(r'^\d{3,4}_.*\.html$', f):
+                try:
+                    os.remove(os.path.join(chat_dir, f))
+                except OSError:
+                    pass
 
     index_rows = []
     srch_files = []
     srch_recs = []
-    for i, (talker, msgs) in enumerate(sorted(by_talker.items(), key=lambda kv: -len(kv[1])), 1):
+    csv_f = open(os.path.join(out_dir, 'all_messages.csv'), 'w', encoding='utf-8-sig', newline='')
+    csv_w = csv.writer(csv_f)
+    csv_w.writerow(['会话', '微信号', '发送方', '是否我发的', '时间', '类型', '内容'])
+    CHUNK = 30000
+    order = sorted(raw, key=lambda t: -len(raw[t]))
+    if args.limit:
+        order = order[:args.limit]
+    for i, talker in enumerate(order, 1):
+        rws = raw.pop(talker)
         name = display_name(talker, contacts)
-        fname = f'{i:03d}_{safe_name(name, talker)}.html'
-        write_chat_page(os.path.join(chat_dir, fname), talker, msgs, contacts, None,
-                        avatar_map.get(talker, ''))
-        fi = len(srch_files)
-        srch_files.append([name, 'chats/' + fname])
-        for m in msgs:
-            body = '[图片]' if m['kind'] == 'image' else m['text']
-            srch_recs.append([fi, m['time'], m['sender'] or name, body[:120], m['id']])
-        lastm = msgs[-1]
+        base = f'{i:03d}_{safe_name(name, talker)}'
+        chunks = [rws[j:j + CHUNK] for j in range(0, len(rws), CHUNK)] or [[]]
+        files = []
+        lastm = None
+        thumbs = 0
+        for pi, rpart in enumerate(chunks, 1):
+            part = [render_message(x, contacts, None, media_idx, avatar_map, self_wxid)
+                    for x in rpart]
+            fn = f'{base}.html' if len(chunks) == 1 else f'{base}_p{pi}.html'
+            nav = ''
+            if len(chunks) > 1:
+                prev = f' · <a href="{base}_p{pi - 1}.html">← 更早</a>' if pi > 1 else ''
+                nxt = f' · <a href="{base}_p{pi + 1}.html">更晚 →</a>' if pi < len(chunks) else ''
+                nav = f' · 第 {pi}/{len(chunks)} 片{prev}{nxt}'
+            write_chat_page(os.path.join(chat_dir, fn), talker, part, contacts, None,
+                            avatar_map.get(talker, ''), nav)
+            files.append(fn)
+            thumbs += sum(1 for m in part if m.get('thumb_only'))
+            lastm = part[-1] if part else lastm
+            fi = len(srch_files)
+            srch_files.append([name if len(chunks) == 1 else f'{name} ({pi}/{len(chunks)})',
+                               'chats/' + fn])
+            # 搜索索引只取每会话最近 800 条：93 万条全量会让 index.html 涨到 60MB+
+            for m in part[-800:]:
+                body = '[图片]' if m['kind'] == 'image' else m['text']
+                srch_recs.append([fi, m['time'], m['sender'] or name, body[:120], m['id']])
+            for m in part:
+                val = '[图片]' if m['kind'] == 'image' else re.sub(r'<[^>]+>', '', m['text'])
+                csv_w.writerow([name, talker, m['sender'] or name, '是' if m['is_sender'] else '否',
+                                fmt_ts(m['time']), m['type'], val])
         last_plain = '[图片]' if lastm['kind'] == 'image' else re.sub(r'<[^>]+>', '', lastm['text'])
         index_rows.append({
             'name': name,
             'talker': talker,
-            'count': len(msgs),
-            'start': fmt_ts(msgs[0]['time']),
+            'count': len(rws),
+            'start': fmt_ts(rws[0][4]),
             'end': fmt_ts(lastm['time']),
             'last': last_plain[:60].replace('\n', ' '),
             'full': last_plain[:400].replace('\n', ' '),
-            'thumbs': sum(1 for m in msgs if m.get('thumb_only')),
-            'file': 'chats/' + fname,
+            'thumbs': thumbs,
+            'file': 'chats/' + files[-1],
             'is_group': talker.endswith('@chatroom'),
             'avatar': avatar_map.get(talker, ''),
+            'pages': len(chunks),
         })
 
     # index.html
@@ -818,13 +919,10 @@ def main():
         tag = '<span class="tag g">群</span>' if it['is_group'] else '<span class="tag">单聊</span>'
         ava = (f'<img class="ava-sm" src="media/avatar/{it["avatar"]}" alt="">'
                if it.get('avatar') else '')
-        b = bk_map.get(it['talker'])
-        if b and b[2]:
-            s1, s2 = b[2][:7], (b[3] or '')[:7]
-            span = s1 if s1 == s2 else f'{s1} ~ {s2}'
-            bk_cell = f'<td class="bkc" data-v="{b[3]}" title="手机备份里的范围 · 文本 {b[4]} MB">{span}</td>'
-        else:
-            bk_cell = '<td class="bkc" data-v="">—</td>'
+        has_pc = it['talker'] in pc_talkers
+        has_bk = it['talker'] in bk_talkers
+        src = '本机+备份' if (has_pc and has_bk) else ('仅备份' if has_bk else '本机')
+        bk_cell = f'<td class="bkc" data-v="{src}">{src}</td>'
         tr.append(f"""<tr data-n="{html.escape(it['name'] + ' ' + it['talker'], quote=True)}"><td data-v="{html.escape(it['name'])}">{ava}<a href="{html.escape(it['file'])}">{html.escape(it['name'])}</a> {tag}</td>
 <td class="num" data-t="num" data-v="{it['count']}">{it['count']}</td><td class="num" data-t="num" data-v="{it['thumbs']}">{it['thumbs'] or '—'}</td><td class="dt" data-v="{it['end']}">{it['end'][:10]}</td>{bk_cell}<td data-v="{html.escape(it['full'])}"><span class="ellip" title="{html.escape(it['full'])}">{html.escape(it['last'])}</span></td></tr>""")
 
@@ -832,11 +930,12 @@ def main():
 
     bk_bar = bk_det = ''
     if bk_sum:
+        n_bk = sum(1 for t in bk_talkers)
         bk_bar = (
-            '<div class="bkbar">📱 手机备份（NAS）· <b>%s</b> 个会话 · %s ~ %s · 文本 %s MB · %s 段 · 媒体 %s 条'
-            '<span class="warn">正文层加密，暂不可读；「备份」列只表示该会话在备份里覆盖到哪</span></div>'
-            % (bk_sum.get('sessions'), (bk_sum.get('start') or '')[:10], (bk_sum.get('end') or '')[:10],
-               bk_sum.get('textMB'), bk_sum.get('segments'), bk_sum.get('media', '—')))
+            '<div class="bkbar">📱 已合并手机备份正文 · 备份里 <b>%s</b> 个会话 / %s ~ %s / %s 段 / 媒体 %s 条'
+            '<span class="note">「来源」列的「备份」表示该会话的聊天记录部分或全部来自手机备份（BAK_0_TEXT）</span></div>'
+            % (n_bk, (bk_sum.get('start') or '')[:10], (bk_sum.get('end') or '')[:10],
+               bk_sum.get('segments'), bk_sum.get('media', '—')))
         if bk_only:
             brow = []
             for r in bk_only[:300]:
@@ -851,6 +950,9 @@ def main():
                 '<th>%s 后段数</th></tr></thead><tbody>%s</tbody></table></details>'
                 % (len(bk_only), bk_sum.get('since', ''), ''.join(brow)))
     import json
+    if len(srch_recs) > 300000:
+        srch_recs.sort(key=lambda r: -r[1])
+        del srch_recs[300000:]
     data_json = json.dumps({'f': srch_files, 'r': srch_recs},
                            ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
     idx = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>微信聊天记录导出</title>
@@ -864,7 +966,7 @@ def main():
 <th data-col="1" class="sorted desc">消息数<span class="ar">▼</span></th>
 <th data-col="2" title="只有缩略图、需要在微信里点开才能缓存的图片数">缺原图<span class="ar"></span></th>
 <th data-col="3">最近<span class="ar"></span></th>
-<th data-col="4" title="手机备份（NAS）里这个会话覆盖的时间范围。正文层加密，暂不可读">备份<span class="ar"></span></th>
+<th data-col="4" title="本机微信数据库 / 手机备份（BAK_0_TEXT）">来源<span class="ar"></span></th>
 <th data-col="5">最后一条<span class="ar"></span></th>
 </tr></thead>
 <tbody>{''.join(tr)}</tbody></table>
@@ -948,16 +1050,8 @@ q.addEventListener('keydown',function(e){{if(e.key==='Enter'){{clearTimeout(time
     if os.path.exists(old_search):
         os.remove(old_search)
 
-    # CSV
-    with open(os.path.join(out_dir, 'all_messages.csv'), 'w', encoding='utf-8-sig', newline='') as f:
-        w = csv.writer(f)
-        w.writerow(['会话', '微信号', '发送方', '是否我发的', '时间', '类型', '内容'])
-        for talker, msgs in by_talker.items():
-            cname = display_name(talker, contacts)
-            for m in msgs:
-                val = '[图片]' if m['kind'] == 'image' else m['text']
-                w.writerow([cname, talker, m['sender'] or cname, '是' if m['is_sender'] else '否',
-                            fmt_ts(m['time']), m['type'], val])
+    # CSV（逐会话流式写入，避免把 93 万条渲染结果留在内存）
+    csv_f.close()
 
     with open(os.path.join(out_dir, 'summary.csv'), 'w', encoding='utf-8-sig', newline='') as f:
         w = csv.writer(f)
