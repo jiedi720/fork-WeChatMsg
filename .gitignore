@@ -19,3 +19,10 @@ app/DataBase/Msg/*
 test*.DS_Store
 
 .DS_Store
+
+# 本地生成物 / 数据（含聊天记录，勿提交）
+.venv
+__pycache__/
+export/
+emoji_src/
+app/DataBase/Msg.db*
