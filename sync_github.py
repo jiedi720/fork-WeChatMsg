@@ -20,7 +20,7 @@ FILES = [
     'wx4_findkey.py', 'start.bat', 'refresh_images.bat', 'emoji_map.json',
     'sync_github.py', 'find_backup_key.py', 'decrypt_backup.py', 'backup_inventory.py',
     'parse_backup_text.py', 'import_backup.py', 'decrypt_backup_media.py', 'decrypt_backup_voice.py',
-    'decrypt_emoji.py',
+    'decrypt_emoji.py', 'fix_cal_pages.py', 'fix_legacy_css.py',
     'decrypt_backup_media_full.py',
     'fetch_link_thumbs.py',
 ]

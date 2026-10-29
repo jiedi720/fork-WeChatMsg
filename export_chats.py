@@ -1119,6 +1119,7 @@ def main():
         files = []
         lastm = None
         thumbs = 0
+        date_file = {}          # 日期 -> 该日期所在分页（首个出现的页）
         for pi, rpart in enumerate(chunks, 1):
             part = [render_message(x, contacts, None, media_idx, avatar_map, self_wxid)
                     for x in rpart]
@@ -1141,6 +1142,9 @@ def main():
                 body = {'image': '[图片]', 'voice': '[语音]'}.get(m['kind'], m['text'])
                 srch_recs.append([fi, m['time'], m['sender'] or name, body[:120], m['id']])
             for m in part:
+                _pd = datetime.fromtimestamp(m['time']).strftime('%Y-%m-%d')
+                if _pd not in date_file:
+                    date_file[_pd] = 'chats/' + fn
                 val = {'image': '[图片]', 'voice': '[语音]'}.get(
                     m['kind'], re.sub(r'<[^>]+>', '', m['text']))
                 csv_w.writerow([name, talker, m['sender'] or name, '是' if m['is_sender'] else '否',
@@ -1154,8 +1158,10 @@ def main():
         for _x in rws:
             _d = datetime.fromtimestamp(_x[4]).strftime('%Y-%m-%d')
             _dc[_d] = _dc.get(_d, 0) + 1
+        _last_href = 'chats/' + files[-1]
         for _d, _c in _dc.items():
-            CAL.setdefault(_d, []).append([_ci, _c])
+            _pf = date_file.get(_d) or _last_href
+            CAL.setdefault(_d, []).append([_ci, _c, _pf] if _pf != _last_href else [_ci, _c])
         index_rows.append({
             'name': name,
             'talker': talker,
@@ -1426,7 +1432,7 @@ function tipShow(a){{
   }}
   list.slice(0,10).forEach(function(x){{
     var c=CONV[x[0]]||['?','#'];
-    out+='<a href="'+c[1]+'#d'+k+'">'
+    out+='<a href="'+(x[2]||c[1])+'#d'+k+'">'
        + (c[3] ? '<img class="ca" src="media/avatar/'+c[3]+'" alt="">' : '<span class="ca">'+esc([...String(c[0])][0]||'')+'</span>')
        + '<span class="cn">'+esc(c[0])+'</span><i>'+x[1]+'</i></a>';
   }});
