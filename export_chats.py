@@ -286,6 +286,7 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
 
     text = ''
     kind = 'text'
+    thumb_only = False
     if mtype == 1:
         text = content or ''
         if text.endswith('\n'):
@@ -344,6 +345,7 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
             text = (f'<a href="{html.escape(href)}" target="_blank" data-zoom>'
                     f'<img class="pic" loading="lazy" src="{html.escape(src)}" alt="图片"></a>')
             kind = 'image'
+            thumb_only = '_t.' in src
         else:
             text = '[图片]'
             kind = 'placeholder'
@@ -366,6 +368,7 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
         'avatar': avatar,
         'text': text,
         'kind': kind,
+        'thumb_only': thumb_only,
         'type': mtype,
     }
 
@@ -375,8 +378,12 @@ CSS = """
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 "Microsoft YaHei","PingFang SC",sans-serif}
 a{color:#1a6fc4;text-decoration:none}
-.wrap{max-width:860px;margin:0 auto;padding:16px}
+.wrap{max-width:860px;margin:0 auto;padding:16px;width:100%}
 header{position:sticky;top:0;background:#f2f2f2cc;backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:10px 16px;z-index:5}
+/* 会话页：内容倒序渲染 + column-reverse，天然从最新一条开始显示，不需要任何滚动 */
+body.chat{height:100vh;overflow:hidden;display:flex;flex-direction:column}
+body.chat header{position:relative;flex:0 0 auto}
+body.chat .scroll{flex:1 1 auto;overflow-y:auto;display:flex;flex-direction:column-reverse;overscroll-behavior:contain}
 header:has(.dbtn){padding-right:128px}
 header h1{font-size:16px;margin:0 0 2px}
 header .meta{font-size:12px;color:var(--sub)}
@@ -404,7 +411,9 @@ header .meta{font-size:12px;color:var(--sub)}
 .lkd{font-size:12px;color:var(--sub);margin-top:4px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .lku{font-size:11px;color:#9aa0a6;margin-top:7px;border-top:1px solid var(--line);padding-top:5px}
 .bubble.ph{color:#666;font-style:normal;background:#fff8e6}
-.bubble.img{padding:3px;background:transparent;box-shadow:none}
+.bubble.img{padding:3px;background:transparent;box-shadow:none;position:relative}
+.bubble.img.thumb::after{content:"缩略";position:absolute;right:7px;bottom:7px;background:#00000066;color:#fff;
+font-size:10px;line-height:1;padding:3px 5px;border-radius:8px;pointer-events:none}
 .bubble.img img.pic{display:block;max-width:300px;max-height:300px;border-radius:4px;cursor:zoom-in}
 .lb{display:none;position:fixed;inset:0;background:#000000cc;z-index:80;align-items:center;justify-content:center;cursor:zoom-out}
 .lb.on{display:flex}
@@ -478,7 +487,7 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar=''):
     last_dt = datetime.fromtimestamp(msgs[-1]['time'])
 
     parts = [f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>{html.escape(name)}</title><style>{CSS}</style></head><body>
+<title>{html.escape(name)}</title><style>{CSS}</style></head><body class="chat">
 <header><h1>{h_ava}{html.escape(name)}</h1>
 <div class="meta">{html.escape(talker)} · 共 {len(msgs)} 条 · {fmt_ts(msgs[0]['time'])} ~ {fmt_ts(msgs[-1]['time'])} · <a href="../index.html">返回会话列表</a></div>
 <button class="dbtn" id="dbtn">📅 按日期查找</button>
@@ -486,13 +495,13 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar=''):
 <div class="dp-head"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
 <div class="dp-body" id="cal-grid"></div>
 </div></header>
-<div class="wrap">"""]
-
+<div class="scroll"><div class="wrap">"""]
+    blocks = []
     last_day = None
     for m in msgs:
         day = datetime.fromtimestamp(m['time']).strftime('%Y-%m-%d')
         if day != last_day:
-            parts.append(f'<div class="day" id="d{day}"><span>{day}</span></div>')
+            blocks.append(f'<div class="day" id="d{day}"><span>{day}</span></div>')
             last_day = day
         cls = 'msg me' if m['is_sender'] else 'msg'
         if m['kind'] == 'system':
@@ -511,26 +520,19 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar=''):
             ava = f'<div class="avatar"{attr_s}><img src="../media/avatar/{m["avatar"]}" alt=""></div>'
         else:
             ava = f'<div class="avatar"{attr_s}>{html.escape(initial)}</div>'
-        bubble_cls = 'bubble' + (' card' if m['kind'] == 'card' else '') + (' link' if m['kind'] == 'link' else '') + (' ph' if m['kind'] == 'placeholder' else '') + (' img' if m['kind'] == 'image' else '')
+        bubble_cls = 'bubble' + (' card' if m['kind'] == 'card' else '') + (' link' if m['kind'] == 'link' else '') + (' ph' if m['kind'] == 'placeholder' else '') + (' img' if m['kind'] == 'image' else '') + (' thumb' if m.get('thumb_only') else '')
         body = m['text'] if m['kind'] in ('image', 'link') else emoji_html(html.escape(m['text']))
-        parts.append(f"""<div class="{cls}" id="m{m['id']}">{ava}
+        blocks.append(f"""<div class="{cls}" id="m{m['id']}">{ava}
 <div class="mid"><div>{who}</div><div class="{bubble_cls}">{body}</div></div>
 <div class="tm">{datetime.fromtimestamp(m['time']).strftime('%H:%M')}</div></div>""")
 
-    parts.append("""</div>
+    # 倒序拼接：配合 .scroll 的 column-reverse，页面天然从最新一条开始
+    parts.extend(reversed(blocks))
+
+    parts.append("""</div></div>
 <div class="ucard" id="ucard"></div>
 <div class="lb" id="lb"><img alt=""></div>
 <script>
-// 像微信一样：打开会话直接停在最新一条（带 #m 锚点从搜索页跳进来时不打扰）
-if(!location.hash){
-  var toBottom=function(){window.scrollTo(0,document.body.scrollHeight);};
-  toBottom();
-  window.addEventListener('load',toBottom);
-  document.addEventListener('DOMContentLoaded',toBottom);
-  setTimeout(toBottom,300);
-  setTimeout(toBottom,900);
-  setTimeout(toBottom,1800);
-}
 var lb=document.getElementById('lb'), lbimg=lb.querySelector('img');
 document.addEventListener('click',function(e){
   var a=e.target.closest('a[data-zoom]');
@@ -673,6 +675,7 @@ def main():
             'end': fmt_ts(lastm['time']),
             'last': last_plain[:60].replace('\n', ' '),
             'full': last_plain[:400].replace('\n', ' '),
+            'thumbs': sum(1 for m in msgs if m.get('thumb_only')),
             'file': 'chats/' + fname,
             'is_group': talker.endswith('@chatroom'),
             'avatar': avatar_map.get(talker, ''),
@@ -685,7 +688,7 @@ def main():
         ava = (f'<img class="ava-sm" src="media/avatar/{it["avatar"]}" alt="">'
                if it.get('avatar') else '')
         tr.append(f"""<tr data-n="{html.escape(it['name'] + ' ' + it['talker'], quote=True)}"><td data-v="{html.escape(it['name'])}">{ava}<a href="{html.escape(it['file'])}">{html.escape(it['name'])}</a> {tag}</td>
-<td class="num" data-t="num" data-v="{it['count']}">{it['count']}</td><td data-v="{it['end']}">{it['end'][:10]}</td><td data-v="{html.escape(it['full'])}"><span class="ellip" title="{html.escape(it['full'])}">{html.escape(it['last'])}</span></td></tr>""")
+<td class="num" data-t="num" data-v="{it['count']}">{it['count']}</td><td class="num" data-t="num" data-v="{it['thumbs']}">{it['thumbs'] or '—'}</td><td data-v="{it['end']}">{it['end'][:10]}</td><td data-v="{html.escape(it['full'])}"><span class="ellip" title="{html.escape(it['full'])}">{html.escape(it['last'])}</span></td></tr>""")
 
     total = sum(it['count'] for it in index_rows)
     import json
@@ -699,8 +702,9 @@ def main():
 <table id="t"><thead><tr>
 <th data-col="0">会话<span class="ar"></span></th>
 <th data-col="1" class="sorted desc">消息数<span class="ar">▼</span></th>
-<th data-col="2">最近<span class="ar"></span></th>
-<th data-col="3">最后一条<span class="ar"></span></th>
+<th data-col="2" title="只有缩略图、需要在微信里点开才能缓存的图片数">缺原图<span class="ar"></span></th>
+<th data-col="3">最近<span class="ar"></span></th>
+<th data-col="4">最后一条<span class="ar"></span></th>
 </tr></thead>
 <tbody>{''.join(tr)}</tbody></table>
 <div id="hits"></div></div>
