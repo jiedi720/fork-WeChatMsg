@@ -22,6 +22,7 @@ FILES = [
     'parse_backup_text.py', 'import_backup.py', 'decrypt_backup_media.py', 'decrypt_backup_voice.py',
     'decrypt_emoji.py',
     'decrypt_backup_media_full.py',
+    'fetch_link_thumbs.py',
 ]
 
 def sanitize(text):

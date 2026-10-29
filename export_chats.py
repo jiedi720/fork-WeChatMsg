@@ -130,6 +130,7 @@ def read_self_wxid():
 MEDIA_ROOT = ''
 BK_MEDIA = {}
 BF_MEDIA = {}
+OG_MAP = {}
 VOICE_MAP = {}
 _IMG_SIZE = {}
 
@@ -320,6 +321,7 @@ def parse_appmsg2(s):
 
     title = grab('title')
     des = grab('des')
+    srcname = grab('sourcedisplayname')
     m = re.search(r'https?://[^\s"\'<>\u3000\\]+', s2)
     url = m.group(0) if m else ''
     if url:
@@ -333,7 +335,7 @@ def parse_appmsg2(s):
         x = html.unescape(re.sub(r'<[^>]*>|]]>', '', x)).strip()
         return re.sub(r'\s+', ' ', x)
 
-    return tidy(title), tidy(des), url, atype
+    return tidy(title), tidy(des), url, atype, tidy(srcname)
 
 
 def fmt_ts(ts):
@@ -399,7 +401,7 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
             text = text[:-1]
     elif mtype == 49:
         xml = content or uncompress_xml(compress)
-        title, des, url, atype = parse_appmsg2(xml)
+        title, des, url, atype, srcname = parse_appmsg2(xml)
         # MSG.SubType 才是可靠的类型来源（xml 在本机库里有字节损坏）
         if sub_type:
             atype = str(sub_type)
@@ -408,16 +410,25 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
             host = ''
             if url:
                 mhost = re.match(r'https?://([^/]+)', url)
-                host = mhost.group(1) if mhost else ''
-            inner = f'<div class="lkt">{html.escape(title or url)}</div>'
-            if des and des != title:
-                inner += f'<div class="lkd">{html.escape(des[:60])}</div>'
-            if host:
-                inner += f'<div class="lku">{html.escape(host)}</div>'
-            if url:
-                text = f'<a class="lk" href="{html.escape(url)}" target="_blank" rel="noreferrer">{inner}</a>'
+                host = (mhost.group(1) if mhost else '').replace('www.', '')
+            og = OG_MAP.get(url, '') if url else ''
+            origin = srcname or host
+            t = html.escape(title or url)
+            d = html.escape(des[:60]) if (des and des != title) else ''
+            if og:
+                right = (f'<div class="lk-i"><img loading="lazy" src="../media/{html.escape(og)}"'
+                         f' alt=""></div>')
             else:
-                text = inner
+                right = f'<div class="lk-i"><span class="ph">{html.escape((origin or "链")[:1])}</span></div>'
+            body = (f'<div class="lk-t"><div class="lkt">{t}</div>'
+                    + (f'<div class="lkd">{d}</div>' if d else '')
+                    + (f'<div class="lku">{html.escape(origin)}</div>' if origin else '')
+                    + '</div>' + right)
+            if url:
+                text = (f'<a class="lk" href="{html.escape(url)}" target="_blank" '
+                        f'rel="noreferrer">{body}</a>')
+            else:
+                text = f'<div class="lk">{body}</div>'
             kind = 'link'
         else:
             head = f'[{label}] '
@@ -440,6 +451,36 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
         else:
             text = raw
         kind = 'system'
+    elif mtype == 48:
+        # 位置：<location x="纬度" y="经度" label="地址" poiname="地点名" />
+        _x = re.search(r'\bx="([\d.]+)"', content or '')
+        _y = re.search(r'\by="([\d.]+)"', content or '')
+        _pn = re.search(r'\bpoiname="([^"]*)"', content or '')
+        _lb = re.search(r'\blabel="([^"]*)"', content or '')
+        pn = html.unescape(_pn.group(1)) if _pn else ''
+        lb = html.unescape(_lb.group(1)) if _lb else ''
+        lat = _x.group(1) if _x else ''
+        lng = _y.group(1) if _y else ''
+        if pn or lb:
+            from urllib.parse import quote
+            head = html.escape(pn or lb)
+            addr = html.escape(lb) if (pn and lb and lb != pn) else ''
+            href = ''
+            if lat and lng:
+                href = ('https://uri.amap.com/marker?position=%s,%s&name=%s'
+                        '&src=wxexport&coordinate=gaode&callnative=0' % (lng, lat, quote(pn or lb)))
+            inner = (f'<div class="loc-i">📍</div><div class="loc-t">'
+                     f'<div class="loc-n">{head}</div>'
+                     + (f'<div class="loc-a">{addr}</div>' if addr else '')
+                     + '</div><div class="loc-go">›</div>')
+            if href:
+                text = f'<a class="loc" href="{html.escape(href)}" target="_blank" rel="noreferrer">{inner}</a>'
+            else:
+                text = f'<div class="loc">{inner}</div>'
+            kind = 'location'
+        else:
+            text = '[位置]'
+            kind = 'placeholder'
     elif mtype == 42:
         text = '[名片] ' + (content or '')[:40]
         kind = 'card'
@@ -562,11 +603,17 @@ header .meta{font-size:12px;color:var(--sub)}
 .msg:target{background:var(--hi);border-radius:6px}
 .bubble.card{background:var(--card);border:1px solid var(--line)}
 .bubble.link,.msg.me .bubble.link{padding:0;background:transparent;box-shadow:none;border:none}
-.lk{display:block;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:10px 12px;color:inherit}
+.lk{display:flex;gap:10px;align-items:stretch;background:var(--card);border:1px solid var(--line);
+border-radius:8px;padding:11px 12px;color:inherit;max-width:min(430px,74vw);text-decoration:none}
 .lk:hover{border-color:var(--link);background:var(--hover)}
+.lk-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
 .lkt{font-size:13px;line-height:1.45;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.lkd{font-size:12px;color:var(--sub);margin-top:4px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.lku{font-size:11px;color:var(--sub);margin-top:7px;border-top:1px solid var(--line);padding-top:5px}
+.lkd{font-size:12px;color:var(--sub);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.lku{font-size:11px;color:var(--sub);margin-top:auto;padding-top:4px}
+.lk-i{width:56px;height:56px;flex:none;align-self:center;border-radius:6px;overflow:hidden;
+background:var(--chip);display:flex;align-items:center;justify-content:center}
+.lk-i img{width:100%;height:100%;object-fit:cover;display:block}
+.lk-i .ph{font-size:20px;font-weight:600;color:var(--sub)}
 .bubble.ph{color:var(--chip-t);font-style:normal;background:var(--hi)}
 .bubble.img{padding:3px;background:transparent;box-shadow:none;position:relative}
 .bubble.img.thumb::after{content:"缩略";position:absolute;right:7px;bottom:7px;background:#00000066;color:#fff;
@@ -574,6 +621,16 @@ font-size:10px;line-height:1;padding:3px 5px;border-radius:8px;pointer-events:no
 .bubble .au{height:32px;max-width:250px;vertical-align:middle;display:inline-block}
 .bubble.stk{padding:0;background:transparent;box-shadow:none}
 .bubble .stk{max-width:160px;max-height:160px;display:block;border-radius:4px;cursor:zoom-in}
+.bubble.loc{padding:0;background:transparent;box-shadow:none;max-width:min(360px,72vw)}
+.loc{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);
+border-radius:9px;padding:10px 12px;text-decoration:none;color:var(--text)}
+.loc:hover{background:var(--hover)}
+.loc-i{font-size:20px;line-height:1;flex:none}
+.loc-t{min-width:0;flex:1}
+.loc-n{font-size:13px;font-weight:600;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.loc-a{font-size:12px;color:var(--sub);margin-top:3px;line-height:1.35;
+display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.loc-go{color:var(--sub);font-size:18px;flex:none}
 .bubble .dur{font-size:11px;color:var(--sub);margin-left:6px;vertical-align:middle}
 .bubble.img img.pic{display:block;max-width:300px;max-height:300px;height:auto;width:auto;border-radius:4px;cursor:zoom-in}
 .lb{display:none;position:fixed;inset:0;background:#000000cc;z-index:80;align-items:center;justify-content:center;cursor:zoom-out}
@@ -648,11 +705,27 @@ padding:8px 6px 5px;border-bottom:1px solid var(--line)}
 .dp-body{max-height:62vh;overflow-y:auto;padding:0 6px 8px;overscroll-behavior:contain}
 .cmh{font-size:11px;color:var(--sub);padding:9px 4px 1px}
 .cgrid{display:grid;grid-template-columns:repeat(7,1fr)}
-.cd{display:block;text-align:center;padding:6px 0;font-size:13px;color:#c9c9c9;line-height:1.2}
-a.cd{color:var(--text);text-decoration:none;border-radius:50%;cursor:pointer}
+.cd{display:block;text-align:center;padding:6px 0 7px;font-size:13px;color:var(--sub);
+opacity:.42;line-height:1.2;position:relative}
+a.cd{color:var(--text);opacity:1;font-weight:600;text-decoration:none;border-radius:8px;cursor:pointer}
+a.cd::after{content:"";position:absolute;left:50%;transform:translateX(-50%);bottom:2px;
+width:3px;height:3px;border-radius:50%;background:var(--link)}
 a.cd:hover{background:var(--hover);color:var(--link)}
 .cd.pad{visibility:hidden}
 .cd.today{background:#07c160;color:#fff!important;border-radius:50%}
+.cbtn{right:56px}
+header:has(.cbtn){padding-right:104px}
+.dpcal{top:76px;width:332px}
+.ctt{position:fixed;z-index:60;display:none;background:var(--card);border:1px solid var(--line);
+border-radius:9px;box-shadow:0 10px 28px #0003;padding:9px 10px;font-size:12px;max-width:290px}
+.ctt.on{display:block}
+.ctt .s{color:var(--sub)}
+.ctr{margin-top:6px;max-height:220px;overflow-y:auto}
+.ctr a{display:flex;align-items:center;justify-content:space-between;gap:12px;
+padding:3px 5px;border-radius:5px;color:var(--text)}
+.ctr a:hover{background:var(--hover);color:var(--link)}
+.ctr a i{font-style:normal;color:var(--sub);flex:none}
+.ctr a span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .day:target span{background:#f5a623;color:#fff}
 """
 
@@ -672,7 +745,7 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar='', nav='')
     last_dt = datetime.fromtimestamp(msgs[-1]['time'])
 
     parts = [f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>{html.escape(name)}</title><script>try{{if(localStorage.getItem('wxdark')==='1')document.documentElement.setAttribute('data-theme','dark')}}catch(e){{}}</script><style>{CSS}</style></head><body class="chat">
+<title>{html.escape(name)}</title><script>(function(){{var m='auto';try{{m=localStorage.getItem('wxthm')||'auto'}}catch(e){{}}var d=m==='dark'||(m==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches);if(d)document.documentElement.setAttribute('data-theme','dark');}})();</script><style>{CSS}</style></head><body class="chat">
 <header><h1>{h_ava}{html.escape(name)}</h1>
 <div class="meta">{html.escape(talker)} · 共 {len(msgs)} 条 · {fmt_ts(msgs[0]['time'])} ~ {fmt_ts(msgs[-1]['time'])} · <a href="../index.html">返回会话列表</a>{nav}</div>
 <button class="tbtn" id="thm">🌙</button>
@@ -706,8 +779,8 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar='', nav='')
             ava = f'<div class="avatar"{attr_s}><img src="../media/avatar/{m["avatar"]}" alt=""></div>'
         else:
             ava = f'<div class="avatar"{attr_s}>{html.escape(initial)}</div>'
-        bubble_cls = 'bubble' + (' card' if m['kind'] == 'card' else '') + (' link' if m['kind'] == 'link' else '') + (' ph' if m['kind'] == 'placeholder' else '') + (' img' if m['kind'] == 'image' else '') + (' stk' if m['kind'] == 'sticker' else '') + (' thumb' if m.get('thumb_only') else '')
-        body = m['text'] if m['kind'] in ('image', 'link', 'voice', 'sticker') else emoji_html(html.escape(m['text']))
+        bubble_cls = 'bubble' + (' card' if m['kind'] == 'card' else '') + (' link' if m['kind'] == 'link' else '') + (' ph' if m['kind'] == 'placeholder' else '') + (' img' if m['kind'] == 'image' else '') + (' stk' if m['kind'] == 'sticker' else '') + (' loc' if m['kind'] == 'location' else '') + (' thumb' if m.get('thumb_only') else '')
+        body = m['text'] if m['kind'] in ('image', 'link', 'voice', 'sticker', 'location') else emoji_html(html.escape(m['text']))
         blocks.append(f"""<div class="{cls}" id="m{m['id']}">{ava}
 <div class="mid"><div>{who}</div><div class="{bubble_cls}">{body}</div></div>
 <div class="tm">{datetime.fromtimestamp(m['time']).strftime('%H:%M')}</div></div>""")
@@ -804,10 +877,16 @@ dpanel.addEventListener('click',function(e){
 });
 </script>
 <script>(function(){var b=document.getElementById('thm');if(!b)return;
-function set(d){document.documentElement.setAttribute('data-theme',d?'dark':'light');
-b.textContent=d?'☀️':'🌙';try{localStorage.setItem('wxdark',d?'1':'0')}catch(e){}}
-var d=false;try{d=localStorage.getItem('wxdark')==='1'}catch(e){}
-set(d);b.addEventListener('click',function(){d=!d;set(d);});})();</script></body></html>""".replace('__DAYS__', day_json).replace('__Y1__', str(first_dt.year)).replace('__M1__', str(first_dt.month)).replace('__Y2__', str(last_dt.year)).replace('__M2__', str(last_dt.month)))
+var mq=matchMedia('(prefers-color-scheme: dark)');
+var modes=['auto','light','dark'],icon={auto:'🌗',light:'☀️',dark:'🌙'},label={auto:'跟随系统',light:'浅色',dark:'深色'};
+var cur='auto';try{cur=localStorage.getItem('wxthm')||'auto'}catch(e){}
+if(modes.indexOf(cur)<0)cur='auto';
+function apply(){var d=cur==='dark'||(cur==='auto'&&mq.matches);
+document.documentElement.setAttribute('data-theme',d?'dark':'light');
+b.textContent=icon[cur];b.title='主题：'+label[cur]+'（点击切换）';
+try{localStorage.setItem('wxthm',cur)}catch(e){}}
+apply();b.addEventListener('click',function(){cur=modes[(modes.indexOf(cur)+1)%3];apply();});
+if(mq.addEventListener)mq.addEventListener('change',apply);})();</script></body></html>""".replace('__DAYS__', day_json).replace('__Y1__', str(first_dt.year)).replace('__M1__', str(first_dt.month)).replace('__Y2__', str(last_dt.year)).replace('__M2__', str(last_dt.month)))
     with open(path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(parts))
     return name
@@ -831,7 +910,7 @@ def main():
         sys.exit(f'找不到 {msg_db}，请先解密数据库')
 
     contacts = load_contacts(mm_db) if os.path.exists(mm_db) else {}
-    global MEDIA_ROOT, BK_MEDIA, BF_MEDIA, VOICE_MAP
+    global MEDIA_ROOT, BK_MEDIA, BF_MEDIA, OG_MAP, VOICE_MAP
     MEDIA_ROOT = os.path.join(out_dir, 'media')
     _vmap = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'voice_map.json')
     if os.path.exists(_vmap):
@@ -845,6 +924,12 @@ def main():
         with open(_bkmap, encoding='utf-8') as _f:
             BK_MEDIA.update(_jm.load(_f))
         print('备份图片: %d 张' % len(BK_MEDIA))
+    _ogmap = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'og_map.json')
+    if os.path.exists(_ogmap):
+        import json as _jo
+        with open(_ogmap, encoding='utf-8') as _fo:
+            OG_MAP.update(_jo.load(_fo))
+        print('分享封面: %d 张' % len(OG_MAP))
     _bfmap = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bf_media_map.json')
     if os.path.exists(_bfmap):
         import json as _jm2
@@ -936,6 +1021,7 @@ def main():
                     pass
 
     index_rows = []
+    CAL = {}          # 日期 -> [[会话序号, 条数], ...] 首页日历用
     srch_files = []
     srch_recs = []
     csv_f = open(os.path.join(out_dir, 'all_messages.csv'), 'w', encoding='utf-8-sig', newline='')
@@ -994,6 +1080,13 @@ def main():
             last_plain = '[图片]' if lastm['kind'] == 'image' else '[语音]'
         else:
             last_plain = re.sub(r'<[^>]+>', '', lastm['text'])
+        _ci = len(index_rows)
+        _dc = {}
+        for _x in rws:
+            _d = datetime.fromtimestamp(_x[4]).strftime('%Y-%m-%d')
+            _dc[_d] = _dc.get(_d, 0) + 1
+        for _d, _c in _dc.items():
+            CAL.setdefault(_d, []).append([_ci, _c])
         index_rows.append({
             'name': name,
             'talker': talker,
@@ -1066,13 +1159,21 @@ def main():
     if len(srch_recs) > 300000:
         srch_recs.sort(key=lambda r: -r[1])
         del srch_recs[300000:]
-    data_json = json.dumps({'f': srch_files, 'r': srch_recs},
+    conv_list = [[it['name'], it['file']] for it in index_rows]
+    data_json = json.dumps({'f': srch_files, 'r': srch_recs,
+                            'c': CAL, 'v': conv_list},
                            ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
-    idx = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>微信聊天记录导出</title><script>try{{if(localStorage.getItem('wxdark')==='1')document.documentElement.setAttribute('data-theme','dark')}}catch(e){{}}</script>
+    idx = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>微信聊天记录导出</title><script>(function(){{var m='auto';try{{m=localStorage.getItem('wxthm')||'auto'}}catch(e){{}}var d=m==='dark'||(m==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches);if(d)document.documentElement.setAttribute('data-theme','dark');}})();</script>
 <style>{CSS}</style></head><body>
 <header><h1>微信聊天记录导出</h1>
 <div class="meta">{len(index_rows)} 个会话 · {total} 条消息 · 生成于 {time.strftime('%Y-%m-%d %H:%M')}</div>
-<button class="tbtn" id="thm">🌙</button></header>
+<button class="tbtn" id="thm">🌙</button>
+<button class="tbtn cbtn" id="cbtn" title="按日期查找：悬停看当天和谁聊了多少条">📅</button>
+<div class="dpanel dpcal" id="cpanel">
+<div class="dp-head"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
+<div class="dp-body" id="cg"></div>
+</div>
+<div class="ctt" id="ctt"></div></header>
 <div class="wrap"><input type="search" id="q" placeholder="搜会话名 / 微信号 / 聊天内容关键字…" autocomplete="off">
 {bk_bar}
 <div class="tabs"><button class="tb" data-g="all">全部 <b>{len(index_rows)}</b></button><button class="tb on" data-g="0">单聊 <b>{n_single}</b></button><button class="tb" data-g="1">群聊 <b>{n_group}</b></button></div>
@@ -1165,12 +1266,71 @@ function run(){{
 q.addEventListener('input',function(){{clearTimeout(timer);timer=setTimeout(run,160);}});
 q.addEventListener('keydown',function(e){{if(e.key==='Enter'){{clearTimeout(timer);run();}}}});
 run();
+
+/* ---- 按日期查找：全局日历 ---- */
+const CAL=DATA.c||{{}}, CONV=DATA.v||[];
+var cbtn=document.getElementById('cbtn'), cpanel=document.getElementById('cpanel'),
+    cg=document.getElementById('cg'), ctt=document.getElementById('ctt');
+function pad2(n){{return n<10?'0'+n:''+n;}}
+function cells(y,m){{
+  var dow=new Date(y,m-1,1).getDay(), total=new Date(y,m,0).getDate(), h='';
+  for(var i=0;i<dow;i++) h+='<span class="cd pad"></span>';
+  for(var d=1;d<=total;d++){{
+    var k=y+'-'+pad2(m)+'-'+pad2(d);
+    h += CAL[k] ? '<a class="cd" data-d="'+k+'">'+d+'</a>' : '<span class="cd">'+d+'</span>';
+  }}
+  return h;
+}}
+(function(){{
+  var ks=Object.keys(CAL).sort();
+  if(!ks.length){{cbtn.style.display='none';return;}}
+  var y1=+ks[0].slice(0,4), y2=+ks[ks.length-1].slice(0,4), h='';
+  for(var y=y1;y<=y2;y++) for(var m=1;m<=12;m++)
+    h+='<div class="cmh">'+y+'年'+m+'月</div><div class="cgrid">'+cells(y,m)+'</div>';
+  cg.innerHTML=h;
+}})();
+function tipShow(a){{
+  var k=a.dataset.d, list=(CAL[k]||[]).slice().sort(function(p,q){{return q[1]-p[1];}});
+  var tot=0; list.forEach(function(x){{tot+=x[1];}});
+  var out='<div><b>'+k+'</b> <span class="s">'+list.length+' 个会话 · '+tot+' 条</span></div><div class="ctr">';
+  list.slice(0,10).forEach(function(x){{
+    var c=CONV[x[0]]||['?','#'];
+    out+='<a href="'+c[1]+'#d'+k+'"><span>'+esc(c[0])+'</span><i>'+x[1]+'</i></a>';
+  }});
+  if(list.length>10) out+='<div class="s" style="padding:4px 5px">还有 '+(list.length-10)+' 个会话…</div>';
+  ctt.innerHTML=out+'</div>'; ctt.classList.add('on');
+  var r=a.getBoundingClientRect(), w=ctt.offsetWidth, hh=ctt.offsetHeight;
+  var left=Math.min(Math.max(8,r.left+r.width/2-w/2), innerWidth-w-8);
+  var top=r.bottom+6;
+  if(top+hh>innerHeight-8) top=Math.max(8,r.top-hh-6);
+  ctt.style.left=left+'px'; ctt.style.top=top+'px';
+}}
+cg.addEventListener('mouseover',function(e){{
+  var a=e.target.closest('a.cd');
+  if(a) tipShow(a); else ctt.classList.remove('on');
+}});
+cg.addEventListener('mouseleave',function(){{ctt.classList.remove('on');}});
+cbtn.addEventListener('click',function(e){{
+  cpanel.classList.toggle('on');
+  if(cpanel.classList.contains('on')) cg.scrollTop=0;
+  e.stopPropagation();
+}});
+document.addEventListener('click',function(e){{
+  if(!e.target.closest('#cpanel') && !e.target.closest('#cbtn')) cpanel.classList.remove('on');
+  if(!e.target.closest('#ctt')) ctt.classList.remove('on');
+}});
 </script>
 <script>(function(){{var b=document.getElementById('thm');if(!b)return;
-function set(d){{document.documentElement.setAttribute('data-theme',d?'dark':'light');
-b.textContent=d?'☀️':'🌙';try{{localStorage.setItem('wxdark',d?'1':'0')}}catch(e){{}}}}
-var d=false;try{{d=localStorage.getItem('wxdark')==='1'}}catch(e){{}}
-set(d);b.addEventListener('click',function(){{d=!d;set(d);}});}})();</script></body></html>"""
+var mq=matchMedia('(prefers-color-scheme: dark)');
+var modes=['auto','light','dark'],icon={{auto:'🌗',light:'☀️',dark:'🌙'}},label={{auto:'跟随系统',light:'浅色',dark:'深色'}};
+var cur='auto';try{{cur=localStorage.getItem('wxthm')||'auto'}}catch(e){{}}
+if(modes.indexOf(cur)<0)cur='auto';
+function apply(){{var d=cur==='dark'||(cur==='auto'&&mq.matches);
+document.documentElement.setAttribute('data-theme',d?'dark':'light');
+b.textContent=icon[cur];b.title='主题：'+label[cur]+'（点击切换）';
+try{{localStorage.setItem('wxthm',cur)}}catch(e){{}}}}
+apply();b.addEventListener('click',function(){{cur=modes[(modes.indexOf(cur)+1)%3];apply();}});
+if(mq.addEventListener)mq.addEventListener('change',apply);}})();</script></body></html>"""
     with open(os.path.join(out_dir, 'index.html'), 'w', encoding='utf-8') as f:
         f.write(idx)
     old_search = os.path.join(out_dir, 'search.html')
