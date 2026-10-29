@@ -118,6 +118,91 @@ def read_self_wxid():
         conn.close()
 
 
+MEDIA_ROOT = ''
+_IMG_SIZE = {}
+
+
+def _img_size_file(path):
+    """用标准库读图片宽高，不依赖 Pillow。支持 jpg / png / gif / webp。"""
+    import struct
+    with open(path, 'rb') as f:
+        head = f.read(32)
+        if head[:8] == b'\x89PNG\r\n\x1a\n':
+            w, h = struct.unpack('>II', head[16:24])
+            return w, h
+        if head[:6] in (b'GIF87a', b'GIF89a'):
+            w, h = struct.unpack('<HH', head[6:10])
+            return w, h
+        if head[:4] == b'RIFF' and head[8:12] == b'WEBP':
+            return _webp_size(f)
+        if head[:2] == b'\xff\xd8':
+            f.seek(2)
+            return _jpeg_size(f)
+    return None
+
+
+def _jpeg_size(f):
+    import struct
+    while True:
+        b = f.read(1)
+        if not b:
+            return None
+        if b != b'\xff':
+            continue
+        marker = f.read(1)
+        while marker == b'\xff':
+            marker = f.read(1)
+        if not marker:
+            return None
+        m = marker[0]
+        if m in (0xd8, 0xd9) or 0xd0 <= m <= 0xd7:
+            continue
+        seg = f.read(2)
+        if len(seg) < 2:
+            return None
+        length = struct.unpack('>H', seg)[0]
+        if m in (0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf):
+            data = f.read(5)
+            if len(data) < 5:
+                return None
+            h, w = struct.unpack('>HH', data[1:5])
+            return w, h
+        f.seek(length - 2, 1)
+
+
+def _webp_size(f):
+    import struct
+    f.seek(12)
+    chunk = f.read(16)
+    if len(chunk) < 16:
+        return None
+    if chunk[:4] == b'VP8 ':
+        w, h = struct.unpack('<HH', chunk[10:14])
+        return w & 0x3fff, h & 0x3fff
+    if chunk[:4] == b'VP8L':
+        bits = struct.unpack('<I', chunk[9:13])[0]
+        return (bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1
+    if chunk[:4] == b'VP8X':
+        w = int.from_bytes(chunk[12:15], 'little') + 1
+        h = int.from_bytes(chunk[15:18], 'little') + 1
+        return w, h
+    return None
+
+
+def image_size(rel):
+    """读图片真实宽高（缓存）。读不到返回 None，页面上就不带宽高属性，行为与以前一致。"""
+    if not MEDIA_ROOT or not rel:
+        return None
+    if rel in _IMG_SIZE:
+        return _IMG_SIZE[rel]
+    try:
+        size = _img_size_file(os.path.join(MEDIA_ROOT, rel))
+    except Exception:
+        size = None
+    _IMG_SIZE[rel] = size
+    return size
+
+
 def build_media_index(media_dir):
     """{相对路径(不含扩展名, 小写): (相对路径带扩展名, 是否缩略图)}"""
     idx = {}
@@ -342,8 +427,11 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
         if media:
             href = '../media/' + media['full']
             src = '../media/' + media['thumb']
+            # 带上真实宽高：图片未加载完也不会撑开页面，保证「打开即在最新一条」不跳
+            dim = image_size(media['thumb'])
+            dim_s = f' width="{dim[0]}" height="{dim[1]}"' if dim else ''
             text = (f'<a href="{html.escape(href)}" target="_blank" data-zoom>'
-                    f'<img class="pic" loading="lazy" src="{html.escape(src)}" alt="图片"></a>')
+                    f'<img class="pic" loading="lazy"{dim_s} src="{html.escape(src)}" alt="图片"></a>')
             kind = 'image'
             thumb_only = '_t.' in src
         else:
@@ -380,10 +468,11 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 "Microsoft Ya
 a{color:#1a6fc4;text-decoration:none}
 .wrap{max-width:860px;margin:0 auto;padding:16px;width:100%}
 header{position:sticky;top:0;background:#f2f2f2cc;backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:10px 16px;z-index:5}
-/* 会话页：内容倒序渲染 + column-reverse，天然从最新一条开始显示，不需要任何滚动 */
+/* 会话页：消息按时间从旧到新、自上而下正常排列（DOM 顺序即时间顺序）；
+   打开时由页面底部脚本瞬间定位到最末，无动画、无滚动过程 */
 body.chat{height:100vh;overflow:hidden;display:flex;flex-direction:column}
 body.chat header{position:relative;flex:0 0 auto}
-body.chat .scroll{flex:1 1 auto;overflow-y:auto;display:flex;flex-direction:column-reverse;overscroll-behavior:contain}
+body.chat .scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scroll-behavior:auto}
 header:has(.dbtn){padding-right:128px}
 header h1{font-size:16px;margin:0 0 2px}
 header .meta{font-size:12px;color:var(--sub)}
@@ -414,7 +503,7 @@ header .meta{font-size:12px;color:var(--sub)}
 .bubble.img{padding:3px;background:transparent;box-shadow:none;position:relative}
 .bubble.img.thumb::after{content:"缩略";position:absolute;right:7px;bottom:7px;background:#00000066;color:#fff;
 font-size:10px;line-height:1;padding:3px 5px;border-radius:8px;pointer-events:none}
-.bubble.img img.pic{display:block;max-width:300px;max-height:300px;border-radius:4px;cursor:zoom-in}
+.bubble.img img.pic{display:block;max-width:300px;max-height:300px;height:auto;width:auto;border-radius:4px;cursor:zoom-in}
 .lb{display:none;position:fixed;inset:0;background:#000000cc;z-index:80;align-items:center;justify-content:center;cursor:zoom-out}
 .lb.on{display:flex}
 .lb img{max-width:92vw;max-height:92vh;border-radius:4px;box-shadow:0 10px 50px #0007}
@@ -526,10 +615,25 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar=''):
 <div class="mid"><div>{who}</div><div class="{bubble_cls}">{body}</div></div>
 <div class="tm">{datetime.fromtimestamp(m['time']).strftime('%H:%M')}</div></div>""")
 
-    # 倒序拼接：配合 .scroll 的 column-reverse，页面天然从最新一条开始
-    parts.extend(reversed(blocks))
+    # 正序拼接：最旧的在上、最新的在下，与微信一致
+    parts.extend(blocks)
 
     parts.append("""</div></div>
+<script>
+/* 打开会话直接停在最新一条：解析完立即定位，不做动画，用户看不到滚动过程。
+   带 #m<id> / #d<日期> 锚点（搜索结果、日历跳转）时交给浏览器定位。 */
+(function(){
+  var sc=document.querySelector('.scroll');
+  if(!sc||location.hash) return;
+  var pinned=true;
+  sc.scrollTop=sc.scrollHeight;
+  sc.addEventListener('wheel',function(){pinned=false;},{passive:true,once:true});
+  sc.addEventListener('touchstart',function(){pinned=false;},{passive:true,once:true});
+  sc.addEventListener('mousedown',function(){pinned=false;},{passive:true,once:true});
+  addEventListener('hashchange',function(){pinned=false;});
+  addEventListener('load',function(){ if(pinned&&!location.hash) sc.scrollTop=sc.scrollHeight; });
+})();
+</script>
 <div class="ucard" id="ucard"></div>
 <div class="lb" id="lb"><img alt=""></div>
 <script>
@@ -623,7 +727,9 @@ def main():
         sys.exit(f'找不到 {msg_db}，请先解密数据库')
 
     contacts = load_contacts(mm_db) if os.path.exists(mm_db) else {}
-    media_idx = build_media_index(os.path.join(out_dir, 'media'))
+    global MEDIA_ROOT
+    MEDIA_ROOT = os.path.join(out_dir, 'media')
+    media_idx = build_media_index(MEDIA_ROOT)
     avatar_map = build_avatar_map(msg_dir, os.path.join(out_dir, 'media', 'avatar'))
     self_wxid = read_self_wxid()
     print(f'图片索引: {len(media_idx)} 个 · 头像: {len(avatar_map)} 个 · 本人: {self_wxid}')
