@@ -526,6 +526,15 @@ input[type=search]{width:100%;padding:8px 12px;border:1px solid var(--line);bord
 .tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:8px;background:#e8f0fe;color:#1a6fc4}
 .tag.g{background:#e6f7e9;color:#1f8b3a}
 td .ellip{display:block;max-width:330px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+td.bkc{color:#8a6d2f;white-space:nowrap;font-size:12px}
+td.dt{white-space:nowrap}
+.bkbar{margin:14px 0 10px;padding:10px 14px;background:#fff8e6;border:1px solid #f0d9a8;border-radius:8px;font-size:13px;color:#7a5a12;line-height:1.7}
+.bkbar b{color:#c07000}
+.bkbar .warn{display:block;margin-top:2px;color:#b1351f;font-size:12px}
+details#bkd{margin:0 0 12px;font-size:13px}
+details#bkd summary{cursor:pointer;padding:8px 0;color:#1a6fc4}
+#bt th{cursor:default}
+#bt td:first-child{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 会话列表里的消息命中区 */
 #hits{margin-top:14px}
 #hits .hh{font-size:12px;color:var(--sub);margin:0 0 6px 2px}
@@ -790,15 +799,57 @@ def main():
         })
 
     # index.html
+    # 手机备份清单（可选）：由 backup_inventory.py 生成 backup_index.json
+    bk_sum, bk_map, bk_only = {}, {}, []
+    bk_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backup_index.json')
+    if os.path.exists(bk_path):
+        import json as _json
+        with open(bk_path, encoding='utf-8') as _f:
+            _bk = _json.load(_f)
+        bk_sum = _bk.get('summary') or {}
+        for _r in _bk.get('sessions') or []:
+            bk_map[_r[0]] = _r
+        _have = {it['talker'] for it in index_rows}
+        bk_only = [r for r in (_bk.get('sessions') or []) if r[0] not in _have and (r[4] or 0) > 0]
+        bk_only.sort(key=lambda r: -(r[4] or 0))
+
     tr = []
     for it in index_rows:
         tag = '<span class="tag g">群</span>' if it['is_group'] else '<span class="tag">单聊</span>'
         ava = (f'<img class="ava-sm" src="media/avatar/{it["avatar"]}" alt="">'
                if it.get('avatar') else '')
+        b = bk_map.get(it['talker'])
+        if b and b[2]:
+            s1, s2 = b[2][:7], (b[3] or '')[:7]
+            span = s1 if s1 == s2 else f'{s1} ~ {s2}'
+            bk_cell = f'<td class="bkc" data-v="{b[3]}" title="手机备份里的范围 · 文本 {b[4]} MB">{span}</td>'
+        else:
+            bk_cell = '<td class="bkc" data-v="">—</td>'
         tr.append(f"""<tr data-n="{html.escape(it['name'] + ' ' + it['talker'], quote=True)}"><td data-v="{html.escape(it['name'])}">{ava}<a href="{html.escape(it['file'])}">{html.escape(it['name'])}</a> {tag}</td>
-<td class="num" data-t="num" data-v="{it['count']}">{it['count']}</td><td class="num" data-t="num" data-v="{it['thumbs']}">{it['thumbs'] or '—'}</td><td data-v="{it['end']}">{it['end'][:10]}</td><td data-v="{html.escape(it['full'])}"><span class="ellip" title="{html.escape(it['full'])}">{html.escape(it['last'])}</span></td></tr>""")
+<td class="num" data-t="num" data-v="{it['count']}">{it['count']}</td><td class="num" data-t="num" data-v="{it['thumbs']}">{it['thumbs'] or '—'}</td><td class="dt" data-v="{it['end']}">{it['end'][:10]}</td>{bk_cell}<td data-v="{html.escape(it['full'])}"><span class="ellip" title="{html.escape(it['full'])}">{html.escape(it['last'])}</span></td></tr>""")
 
     total = sum(it['count'] for it in index_rows)
+
+    bk_bar = bk_det = ''
+    if bk_sum:
+        bk_bar = (
+            '<div class="bkbar">📱 手机备份（NAS）· <b>%s</b> 个会话 · %s ~ %s · 文本 %s MB · %s 段 · 媒体 %s 条'
+            '<span class="warn">正文层加密，暂不可读；「备份」列只表示该会话在备份里覆盖到哪</span></div>'
+            % (bk_sum.get('sessions'), (bk_sum.get('start') or '')[:10], (bk_sum.get('end') or '')[:10],
+               bk_sum.get('textMB'), bk_sum.get('segments'), bk_sum.get('media', '—')))
+        if bk_only:
+            brow = []
+            for r in bk_only[:300]:
+                nick = (' <span class="tag">%s</span>' % html.escape(r[1])) if r[1] else ''
+                brow.append('<tr><td>%s%s</td><td>%s ~ %s</td><td class="num">%s</td><td class="num">%s</td></tr>'
+                            % (html.escape(r[0]), nick, (r[2] or '')[:10], (r[3] or '')[:10],
+                               r[4], r[6] or '—'))
+            bk_det = (
+                '<details id="bkd"><summary>备份里还有 <b>%d</b> 个当前导出没有的会话'
+                '（按文本体积排序，最多显示 300）</summary>'
+                '<table id="bt"><thead><tr><th>会话</th><th>覆盖范围</th><th>文本 MB</th>'
+                '<th>%s 后段数</th></tr></thead><tbody>%s</tbody></table></details>'
+                % (len(bk_only), bk_sum.get('since', ''), ''.join(brow)))
     import json
     data_json = json.dumps({'f': srch_files, 'r': srch_recs},
                            ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
@@ -807,14 +858,17 @@ def main():
 <header><h1>微信聊天记录导出</h1>
 <div class="meta">{len(index_rows)} 个会话 · {total} 条消息 · 生成于 {time.strftime('%Y-%m-%d %H:%M')}</div></header>
 <div class="wrap"><input type="search" id="q" placeholder="搜会话名 / 微信号 / 聊天内容关键字…" autocomplete="off">
+{bk_bar}
 <table id="t"><thead><tr>
 <th data-col="0">会话<span class="ar"></span></th>
 <th data-col="1" class="sorted desc">消息数<span class="ar">▼</span></th>
 <th data-col="2" title="只有缩略图、需要在微信里点开才能缓存的图片数">缺原图<span class="ar"></span></th>
 <th data-col="3">最近<span class="ar"></span></th>
-<th data-col="4">最后一条<span class="ar"></span></th>
+<th data-col="4" title="手机备份（NAS）里这个会话覆盖的时间范围。正文层加密，暂不可读">备份<span class="ar"></span></th>
+<th data-col="5">最后一条<span class="ar"></span></th>
 </tr></thead>
 <tbody>{''.join(tr)}</tbody></table>
+{bk_det}
 <div id="hits"></div></div>
 <script>
 const DATA={data_json};

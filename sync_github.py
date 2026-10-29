@@ -18,7 +18,7 @@ FILES = [
     'export_chats.py', 'build_emoji.py', 'decrypt_media.py', 'fetch_avatars.py',
     'make_previews.py', '_decrypt_all.py', '_merge.py', 'wx4_tool.py',
     'wx4_findkey.py', 'start.bat', 'refresh_images.bat', 'emoji_map.json',
-    'sync_github.py',
+    'sync_github.py', 'find_backup_key.py', 'decrypt_backup.py', 'backup_inventory.py',
 ]
 
 def sanitize(text):

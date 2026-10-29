@@ -26,3 +26,8 @@ __pycache__/
 export/
 emoji_src/
 app/DataBase/Msg.db*
+
+# 备份解密产物（含真实账号/会话名，勿提交）
+backup_index.json
+backup_key.txt
+wx4_key.txt
