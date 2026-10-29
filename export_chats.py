@@ -483,12 +483,17 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
 
 
 CSS = """
-:root{--bg:#ededed;--panel:#f7f7f7;--me:#95ec69;--other:#fff;--text:#1a1a1a;--sub:#8a8a8a;--line:#e0e0e0}
+:root{--bg:#ededed;--panel:#f7f7f7;--card:#fff;--me:#95ec69;--other:#fff;--text:#1a1a1a;
+--text2:#444;--sub:#8a8a8a;--line:#e0e0e0;--chip:#dadada;--chip-t:#666;--hover:#fafafa;
+--hi:#fff8e6;--gold:#8a6d2f;--ava:#cfcfcf;--link:#1a6fc4}
+html[data-theme=dark]{color-scheme:dark;--bg:#111112;--panel:#191a1b;--card:#212223;--me:#2f7d4f;--other:#262728;
+--text:#e7e7e7;--text2:#c2c2c2;--sub:#909090;--line:#303132;--chip:#2c2d2e;--chip-t:#a8a8a8;
+--hover:#262728;--hi:#3a331e;--gold:#c9a35c;--ava:#3a3b3c;--link:#5aa9e6}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 "Microsoft YaHei","PingFang SC",sans-serif}
-a{color:#1a6fc4;text-decoration:none}
+a{color:var(--link);text-decoration:none}
 .wrap{max-width:860px;margin:0 auto;padding:16px;width:100%}
-header{position:sticky;top:0;background:#f2f2f2cc;backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:10px 16px;z-index:5}
+header{position:sticky;top:0;background:var(--panel);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:10px 16px;z-index:5}
 /* 会话页：消息按时间从旧到新、自上而下正常排列（DOM 顺序即时间顺序）；
    打开时由页面底部脚本瞬间定位到最末，无动画、无滚动过程 */
 body.chat{height:100vh;overflow:hidden;display:flex;flex-direction:column}
@@ -503,29 +508,29 @@ header:has(.dbtn){padding-right:128px}
 header h1{font-size:16px;margin:0 0 2px}
 header .meta{font-size:12px;color:var(--sub)}
 .day{text-align:center;margin:18px 0 8px}
-.day span{background:#dadada;color:#666;font-size:12px;padding:2px 10px;border-radius:10px}
+.day span{background:var(--chip);color:var(--chip-t);font-size:12px;padding:2px 10px;border-radius:10px}
 .msg{display:flex;margin:8px 0;gap:8px;align-items:flex-start}
 .msg.me{flex-direction:row-reverse}
-.avatar{width:34px;height:34px;border-radius:4px;background:#cfcfcf;flex:0 0 34px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;overflow:hidden;cursor:pointer}
+.avatar{width:34px;height:34px;border-radius:4px;background:var(--ava);flex:0 0 34px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;overflow:hidden;cursor:pointer}
 .avatar img{width:100%;height:100%;object-fit:cover}
 .ava-sm{width:22px;height:22px;border-radius:4px;object-fit:cover;vertical-align:-6px;margin-right:6px}
 .bubble{max-width:min(560px,72vw);background:var(--other);border-radius:6px;padding:8px 12px;white-space:pre-wrap;word-break:break-word;box-shadow:0 0 1px #0001}
 .mid{min-width:0}
 .msg.me .bubble{background:var(--me)}
 .msg.system{justify-content:center}
-.msg.system .bubble{background:#dadada;color:#666;font-size:12px;box-shadow:none;max-width:min(660px,82vw);text-align:center}
+.msg.system .bubble{background:var(--chip);color:var(--chip-t);font-size:12px;box-shadow:none;max-width:min(660px,82vw);text-align:center}
 .msg .who{font-size:12px;color:var(--sub);margin-bottom:2px}
-.msg .tm{font-size:11px;color:#b0b0b0;align-self:flex-end;margin:0 4px}
+.msg .tm{font-size:11px;color:var(--sub);align-self:flex-end;margin:0 4px}
 .msg:target .bubble{box-shadow:0 0 0 2px #f5a623}
-.msg:target{background:#fff8e6;border-radius:6px}
-.bubble.card{background:#fff;border:1px solid var(--line)}
+.msg:target{background:var(--hi);border-radius:6px}
+.bubble.card{background:var(--card);border:1px solid var(--line)}
 .bubble.link,.msg.me .bubble.link{padding:0;background:transparent;box-shadow:none;border:none}
-.lk{display:block;background:#fff;border:1px solid var(--line);border-radius:6px;padding:10px 12px;color:inherit}
-.lk:hover{border-color:#b9cee6;background:#fbfdff}
-.lkt{font-size:13px;line-height:1.45;color:#1a1a1a;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.lk{display:block;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:10px 12px;color:inherit}
+.lk:hover{border-color:var(--link);background:var(--hover)}
+.lkt{font-size:13px;line-height:1.45;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .lkd{font-size:12px;color:var(--sub);margin-top:4px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.lku{font-size:11px;color:#9aa0a6;margin-top:7px;border-top:1px solid var(--line);padding-top:5px}
-.bubble.ph{color:#666;font-style:normal;background:#fff8e6}
+.lku{font-size:11px;color:var(--sub);margin-top:7px;border-top:1px solid var(--line);padding-top:5px}
+.bubble.ph{color:var(--chip-t);font-style:normal;background:var(--hi)}
 .bubble.img{padding:3px;background:transparent;box-shadow:none;position:relative}
 .bubble.img.thumb::after{content:"缩略";position:absolute;right:7px;bottom:7px;background:#00000066;color:#fff;
 font-size:10px;line-height:1;padding:3px 5px;border-radius:8px;pointer-events:none}
@@ -534,58 +539,67 @@ font-size:10px;line-height:1;padding:3px 5px;border-radius:8px;pointer-events:no
 .lb.on{display:flex}
 .lb img{max-width:92vw;max-height:92vh;border-radius:4px;box-shadow:0 10px 50px #0007}
 img.emo{width:20px;height:20px;vertical-align:-4px;margin:-1px 1px 0;image-rendering:auto}
-table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden}
+table{width:100%;border-collapse:collapse;background:var(--card);border-radius:8px;overflow:hidden}
 th,td{padding:8px 10px;border-bottom:1px solid var(--line);font-size:13px;text-align:left}
-th{background:#f7f7f7;position:sticky;top:0;font-weight:600;cursor:pointer;user-select:none;white-space:nowrap}
-th:hover{background:#eee}
-th .ar{font-size:10px;margin-left:4px;color:#c8c8c8}
+th{background:var(--panel);position:sticky;top:0;font-weight:600;cursor:pointer;user-select:none;white-space:nowrap}
+th:hover{background:var(--hover)}
+th .ar{font-size:10px;margin-left:4px;color:var(--sub)}
+.tbtn{position:absolute;right:16px;top:11px;font-size:14px;padding:3px 10px;border:1px solid var(--line);
+background:var(--card);border-radius:14px;cursor:pointer;line-height:1.3}
+.tbtn:hover{background:var(--hover)}
+body.chat .tbtn{right:150px}
+header:has(.tbtn){padding-right:64px}
+header:has(.dbtn){padding-right:250px}
 .tabs{display:flex;gap:8px;margin:14px 0 10px}
-.tb{border:1px solid var(--line);background:#fff;color:#555;border-radius:16px;padding:5px 14px;
+.tb{border:1px solid var(--line);background:var(--card);color:var(--text2);border-radius:16px;padding:5px 14px;
 font-size:13px;cursor:pointer;font-family:inherit}
 .tb.on{background:#07c160;color:#fff;border-color:#07c160}
 .tb b{font-weight:600;margin-left:3px;opacity:.85}
-th.sorted{color:#1a6fc4}
-th.sorted .ar{color:#1a6fc4}
-tr:hover td{background:#fafafa}
-td.num{text-align:right;font-variant-numeric:tabular-nums;color:#444}
-input[type=search]{width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:6px;margin:10px 0;font-size:13px}
-.tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:8px;background:#e8f0fe;color:#1a6fc4}
-.tag.g{background:#e6f7e9;color:#1f8b3a}
+th.sorted{color:var(--link)}
+th.sorted .ar{color:var(--link)}
+tr:hover td{background:var(--hover)}
+td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--text2)}
+input[type=search]{width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:6px;margin:10px 0;
+font-size:13px;background:var(--card);color:var(--text)}
+.tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:8px;background:#1a6fc422;color:var(--link)}
+.tag.g{background:#1f8b3a22;color:#2fa457}
 td .ellip{display:block;max-width:330px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-td.bkc{color:#8a6d2f;white-space:nowrap;font-size:12px}
+td.bkc{color:var(--gold);white-space:nowrap;font-size:12px}
 td.dt{white-space:nowrap}
-.bkbar{margin:14px 0 10px;padding:10px 14px;background:#fff8e6;border:1px solid #f0d9a8;border-radius:8px;font-size:13px;color:#7a5a12;line-height:1.7}
-.bkbar b{color:#c07000}
-.bkbar .warn{display:block;margin-top:2px;color:#b1351f;font-size:12px}
-.bkbar .note{display:block;margin-top:2px;color:#8a6d2f;font-size:12px}
+.bkbar{margin:14px 0 10px;padding:10px 14px;background:var(--hi);border:1px solid var(--line);
+border-radius:8px;font-size:13px;color:var(--gold);line-height:1.7}
+.bkbar b{color:var(--gold)}
+.bkbar .warn{display:block;margin-top:2px;color:#d4574a;font-size:12px}
+.bkbar .note{display:block;margin-top:2px;color:var(--gold);font-size:12px;opacity:.85}
 details#bkd{margin:0 0 12px;font-size:13px}
-details#bkd summary{cursor:pointer;padding:8px 0;color:#1a6fc4}
+details#bkd summary{cursor:pointer;padding:8px 0;color:var(--link)}
 #bt th{cursor:default}
 #bt td:first-child{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 会话列表里的消息命中区 */
 #hits{margin-top:14px}
 #hits .hh{font-size:12px;color:var(--sub);margin:0 0 6px 2px}
-.hit{background:#fff;border-bottom:1px solid var(--line);padding:9px 12px;font-size:13px;line-height:1.55}
+.hit{background:var(--card);border-bottom:1px solid var(--line);padding:9px 12px;font-size:13px;line-height:1.55}
 .hit:first-child{border-top-left-radius:8px;border-top-right-radius:8px}
 .hit:last-child{border-bottom-left-radius:8px;border-bottom-right-radius:8px;border-bottom:none}
 .hit .h{font-size:12px;color:var(--sub);margin-bottom:3px}
-.hit .h b{color:#1a6fc4;font-weight:600}
+.hit .h b{color:var(--link);font-weight:600}
 .hit .x{word-break:break-word;color:var(--text)}
 mark{background:#ffe58f;padding:0 1px;border-radius:2px}
+html[data-theme=dark] mark{background:#6b5b1f;color:var(--text)}
 .empty{color:var(--sub);font-size:13px;padding:12px 2px}
 /* 头像信息卡 */
-.ucard{display:none;position:fixed;z-index:60;background:#fff;border:1px solid var(--line);border-radius:8px;
+.ucard{display:none;position:fixed;z-index:60;background:var(--card);border:1px solid var(--line);border-radius:8px;
 box-shadow:0 10px 28px #0002;padding:11px 13px;min-width:190px;max-width:290px;font-size:13px}
 .ucard.on{display:block}
 .ucard .uc-n{font-weight:600;font-size:14px;line-height:1.4;word-break:break-all}
 .ucard .uc-r{font-size:12px;color:var(--sub);margin-top:1px}
-.ucard .uc-row{font-size:12px;color:#444;margin-top:5px;word-break:break-all;display:flex;gap:6px}
+.ucard .uc-row{font-size:12px;color:var(--text2);margin-top:5px;word-break:break-all;display:flex;gap:6px}
 .ucard .uc-row i{color:var(--sub);font-style:normal;flex:0 0 48px}
 /* 按日期查找 */
 .dbtn{position:absolute;right:16px;top:11px;font-size:12px;padding:4px 10px;border:1px solid var(--line);
-background:#fff;border-radius:14px;cursor:pointer;color:#1a6fc4}
-.dbtn:hover{background:#f2f6fc}
-.dpanel{display:none;position:absolute;right:16px;top:64px;width:304px;background:#fff;
+background:var(--card);border-radius:14px;cursor:pointer;color:var(--link)}
+.dbtn:hover{background:var(--hover)}
+.dpanel{display:none;position:absolute;right:16px;top:64px;width:304px;background:var(--card);
 border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px #0002;z-index:20;overflow:hidden}
 .dpanel.on{display:block}
 .dp-head{display:grid;grid-template-columns:repeat(7,1fr);text-align:center;font-size:11px;color:var(--sub);
@@ -594,8 +608,8 @@ padding:8px 6px 5px;border-bottom:1px solid var(--line)}
 .cmh{font-size:11px;color:var(--sub);padding:9px 4px 1px}
 .cgrid{display:grid;grid-template-columns:repeat(7,1fr)}
 .cd{display:block;text-align:center;padding:6px 0;font-size:13px;color:#c9c9c9;line-height:1.2}
-a.cd{color:#1a1a1a;text-decoration:none;border-radius:50%;cursor:pointer}
-a.cd:hover{background:#eef3fa;color:#1a6fc4}
+a.cd{color:var(--text);text-decoration:none;border-radius:50%;cursor:pointer}
+a.cd:hover{background:var(--hover);color:var(--link)}
 .cd.pad{visibility:hidden}
 .cd.today{background:#07c160;color:#fff!important;border-radius:50%}
 .day:target span{background:#f5a623;color:#fff}
@@ -617,9 +631,10 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar='', nav='')
     last_dt = datetime.fromtimestamp(msgs[-1]['time'])
 
     parts = [f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>{html.escape(name)}</title><style>{CSS}</style></head><body class="chat">
+<title>{html.escape(name)}</title><script>try{{if(localStorage.getItem('wxdark')==='1')document.documentElement.setAttribute('data-theme','dark')}}catch(e){{}}</script><style>{CSS}</style></head><body class="chat">
 <header><h1>{h_ava}{html.escape(name)}</h1>
 <div class="meta">{html.escape(talker)} · 共 {len(msgs)} 条 · {fmt_ts(msgs[0]['time'])} ~ {fmt_ts(msgs[-1]['time'])} · <a href="../index.html">返回会话列表</a>{nav}</div>
+<button class="tbtn" id="thm">🌙</button>
 <button class="dbtn" id="dbtn">📅 按日期查找</button>
 <div class="dpanel" id="dpanel">
 <div class="dp-head"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
@@ -699,7 +714,7 @@ document.addEventListener('click',function(e){
   var rows=[];
   if(g) rows.push(['群昵称',esc(g)]);
   if(a) rows.push(['微信号',esc(a)]);
-  else rows.push(['微信号','<span style="color:#8a8a8a">未设置</span>']);
+  else rows.push(['微信号','<span style="color:var(--sub)">未设置</span>']);
   if(u) rows.push(['wxid',esc(u)]);
   rows.forEach(function(x){h+='<div class="uc-row"><i>'+x[0]+'</i><span>'+x[1]+'</span></div>';});
   card.innerHTML=h;
@@ -746,7 +761,12 @@ dbtn.addEventListener('click',function(e){
 dpanel.addEventListener('click',function(e){
   if(e.target.closest('a.cd')) dpanel.classList.remove('on');
 });
-</script></body></html>""".replace('__DAYS__', day_json).replace('__Y1__', str(first_dt.year)).replace('__M1__', str(first_dt.month)).replace('__Y2__', str(last_dt.year)).replace('__M2__', str(last_dt.month)))
+</script>
+<script>(function(){var b=document.getElementById('thm');if(!b)return;
+function set(d){document.documentElement.setAttribute('data-theme',d?'dark':'light');
+b.textContent=d?'☀️':'🌙';try{localStorage.setItem('wxdark',d?'1':'0')}catch(e){}}
+var d=false;try{d=localStorage.getItem('wxdark')==='1'}catch(e){}
+set(d);b.addEventListener('click',function(){d=!d;set(d);});})();</script></body></html>""".replace('__DAYS__', day_json).replace('__Y1__', str(first_dt.year)).replace('__M1__', str(first_dt.month)).replace('__Y2__', str(last_dt.year)).replace('__M2__', str(last_dt.month)))
     with open(path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(parts))
     return name
@@ -991,10 +1011,11 @@ def main():
         del srch_recs[300000:]
     data_json = json.dumps({'f': srch_files, 'r': srch_recs},
                            ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
-    idx = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>微信聊天记录导出</title>
+    idx = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>微信聊天记录导出</title><script>try{{if(localStorage.getItem('wxdark')==='1')document.documentElement.setAttribute('data-theme','dark')}}catch(e){{}}</script>
 <style>{CSS}</style></head><body>
 <header><h1>微信聊天记录导出</h1>
-<div class="meta">{len(index_rows)} 个会话 · {total} 条消息 · 生成于 {time.strftime('%Y-%m-%d %H:%M')}</div></header>
+<div class="meta">{len(index_rows)} 个会话 · {total} 条消息 · 生成于 {time.strftime('%Y-%m-%d %H:%M')}</div>
+<button class="tbtn" id="thm">🌙</button></header>
 <div class="wrap"><input type="search" id="q" placeholder="搜会话名 / 微信号 / 聊天内容关键字…" autocomplete="off">
 {bk_bar}
 <div class="tabs"><button class="tb on" data-g="all">全部 <b>{len(index_rows)}</b></button><button class="tb" data-g="0">单聊 <b>{n_single}</b></button><button class="tb" data-g="1">群聊 <b>{n_group}</b></button></div>
@@ -1086,7 +1107,12 @@ function run(){{
 }}
 q.addEventListener('input',function(){{clearTimeout(timer);timer=setTimeout(run,160);}});
 q.addEventListener('keydown',function(e){{if(e.key==='Enter'){{clearTimeout(timer);run();}}}});
-</script></body></html>"""
+</script>
+<script>(function(){{var b=document.getElementById('thm');if(!b)return;
+function set(d){{document.documentElement.setAttribute('data-theme',d?'dark':'light');
+b.textContent=d?'☀️':'🌙';try{{localStorage.setItem('wxdark',d?'1':'0')}}catch(e){{}}}}
+var d=false;try{{d=localStorage.getItem('wxdark')==='1'}}catch(e){{}}
+set(d);b.addEventListener('click',function(){{d=!d;set(d);}});}})();</script></body></html>"""
     with open(os.path.join(out_dir, 'index.html'), 'w', encoding='utf-8') as f:
         f.write(idx)
     old_search = os.path.join(out_dir, 'search.html')
