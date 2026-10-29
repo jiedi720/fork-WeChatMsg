@@ -119,6 +119,7 @@ def read_self_wxid():
 
 
 MEDIA_ROOT = ''
+BK_MEDIA = {}
 _IMG_SIZE = {}
 
 
@@ -359,6 +360,7 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
      content, display, bytes_extra, compress) = row[:10]
 
     sender_hint = row[10] if len(row) > 10 else ''
+    media_bk = (row[11] or '') if len(row) > 11 else ''
     if sender_hint == talker:      # 群消息里取不到发送者时退回，不显示群号当人名
         sender_hint = ''
 
@@ -431,20 +433,29 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
         text = '[名片] ' + (content or '')[:40]
         kind = 'card'
     elif mtype == 3:
-        media = media_for_message(bytes_extra, media_idx)
-        if media:
-            href = '../media/' + media['full']
-            src = '../media/' + media['thumb']
-            # 带上真实宽高：图片未加载完也不会撑开页面，保证「打开即在最新一条」不跳
-            dim = image_size(media['thumb'])
+        bkimg = BK_MEDIA.get(media_bk) if media_bk else None
+        if bkimg:
+            dim = image_size(bkimg)
             dim_s = f' width="{dim[0]}" height="{dim[1]}"' if dim else ''
-            text = (f'<a href="{html.escape(href)}" target="_blank" data-zoom>'
-                    f'<img class="pic" loading="lazy"{dim_s} src="{html.escape(src)}" alt="图片"></a>')
+            text = (f'<a href="../media/{html.escape(bkimg)}" data-zoom>'
+                    f'<img class="pic" loading="lazy"{dim_s} src="../media/{html.escape(bkimg)}" alt="图片"></a>')
             kind = 'image'
-            thumb_only = '_t.' in src
+            thumb_only = media_bk.endswith('__thumb')
         else:
-            text = '[图片]'
-            kind = 'placeholder'
+            media = media_for_message(bytes_extra, media_idx)
+            if media:
+                href = '../media/' + media['full']
+                src = '../media/' + media['thumb']
+                # 带上真实宽高：图片未加载完也不会撑开页面，保证「打开即在最新一条」不跳
+                dim = image_size(media['thumb'])
+                dim_s = f' width="{dim[0]}" height="{dim[1]}"' if dim else ''
+                text = (f'<a href="{html.escape(href)}" data-zoom>'
+                        f'<img class="pic" loading="lazy"{dim_s} src="{html.escape(src)}" alt="图片"></a>')
+                kind = 'image'
+                thumb_only = '_t.' in src
+            else:
+                text = '[图片]'
+                kind = 'placeholder'
     else:
         text = '[' + TYPE_LABEL.get(mtype, f'消息类型{mtype}') + ']'
         if mtype == 34 and display:
@@ -528,6 +539,11 @@ th,td{padding:8px 10px;border-bottom:1px solid var(--line);font-size:13px;text-a
 th{background:#f7f7f7;position:sticky;top:0;font-weight:600;cursor:pointer;user-select:none;white-space:nowrap}
 th:hover{background:#eee}
 th .ar{font-size:10px;margin-left:4px;color:#c8c8c8}
+.tabs{display:flex;gap:8px;margin:14px 0 10px}
+.tb{border:1px solid var(--line);background:#fff;color:#555;border-radius:16px;padding:5px 14px;
+font-size:13px;cursor:pointer;font-family:inherit}
+.tb.on{background:#07c160;color:#fff;border-color:#07c160}
+.tb b{font-weight:600;margin-left:3px;opacity:.85}
 th.sorted{color:#1a6fc4}
 th.sorted .ar{color:#1a6fc4}
 tr:hover td{background:#fafafa}
@@ -754,8 +770,14 @@ def main():
         sys.exit(f'找不到 {msg_db}，请先解密数据库')
 
     contacts = load_contacts(mm_db) if os.path.exists(mm_db) else {}
-    global MEDIA_ROOT
+    global MEDIA_ROOT, BK_MEDIA
     MEDIA_ROOT = os.path.join(out_dir, 'media')
+    _bkmap = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bk_media_map.json')
+    if os.path.exists(_bkmap):
+        import json as _jm
+        with open(_bkmap, encoding='utf-8') as _f:
+            BK_MEDIA.update(_jm.load(_f))
+        print('备份图片: %d 张' % len(BK_MEDIA))
     media_idx = build_media_index(MEDIA_ROOT)
     avatar_map = build_avatar_map(msg_dir, os.path.join(out_dir, 'media', 'avatar'))
     self_wxid = read_self_wxid()
@@ -791,8 +813,8 @@ def main():
             add = 0
             dup = 0
             lid = 10 ** 8
-            for talker, ty, is_sender, ts, content, svr, hint in ex.execute(
-                    'SELECT StrTalker, Type, IsSender, CreateTime, StrContent, MsgSvrID, SenderHint '
+            for talker, ty, is_sender, ts, content, svr, hint, mid in ex.execute(
+                    'SELECT StrTalker, Type, IsSender, CreateTime, StrContent, MsgSvrID, SenderHint, MediaId '
                     'FROM MSG ORDER BY StrTalker, CreateTime'):
                 bk_talkers.add(talker)
                 if svr and seen_svr.get((talker, svr)):
@@ -806,7 +828,7 @@ def main():
                     continue
                 lid += 1
                 raw.setdefault(talker, []).append(
-                    (lid, ty, 0, is_sender, ts, talker, content, '', None, None, hint))
+                    (lid, ty, 0, is_sender, ts, talker, content, '', None, None, hint, mid))
                 add += 1
             print('备份: 新增 %d 条 · 与本机重复跳过 %d 条' % (add, dup))
         finally:
@@ -846,8 +868,19 @@ def main():
     csv_f = open(os.path.join(out_dir, 'all_messages.csv'), 'w', encoding='utf-8-sig', newline='')
     csv_w = csv.writer(csv_f)
     csv_w.writerow(['会话', '微信号', '发送方', '是否我发的', '时间', '类型', '内容'])
-    CHUNK = 30000
+    CHUNK = 6000
     order = sorted(raw, key=lambda t: -len(raw[t]))
+    kws = []
+    # 排除名单：exclude_sessions.txt 每行一个会话名（子串匹配）或完整 talker
+    _exf = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'exclude_sessions.txt')
+    if os.path.exists(_exf):
+        with open(_exf, encoding='utf-8') as _f:
+            kws = [l.strip() for l in _f if l.strip() and not l.startswith('#')]
+        if kws:
+            _before = len(order)
+            order = [t for t in order
+                     if not any(k == t or k in display_name(t, contacts) for k in kws)]
+            print('排除会话 %d 个（名单 %d 条）' % (_before - len(order), len(kws)))
     if args.limit:
         order = order[:args.limit]
     for i, talker in enumerate(order, 1):
@@ -911,7 +944,8 @@ def main():
         for _r in _bk.get('sessions') or []:
             bk_map[_r[0]] = _r
         _have = {it['talker'] for it in index_rows}
-        bk_only = [r for r in (_bk.get('sessions') or []) if r[0] not in _have and (r[4] or 0) > 0]
+        bk_only = [r for r in (_bk.get('sessions') or []) if r[0] not in _have and (r[4] or 0) > 0
+                   and not any(k == r[0] or k in (r[1] or '') for k in kws)]
         bk_only.sort(key=lambda r: -(r[4] or 0))
 
     tr = []
@@ -923,10 +957,12 @@ def main():
         has_bk = it['talker'] in bk_talkers
         src = '本机+备份' if (has_pc and has_bk) else ('仅备份' if has_bk else '本机')
         bk_cell = f'<td class="bkc" data-v="{src}">{src}</td>'
-        tr.append(f"""<tr data-n="{html.escape(it['name'] + ' ' + it['talker'], quote=True)}"><td data-v="{html.escape(it['name'])}">{ava}<a href="{html.escape(it['file'])}">{html.escape(it['name'])}</a> {tag}</td>
+        tr.append(f"""<tr data-n="{html.escape(it['name'] + ' ' + it['talker'], quote=True)}" data-g="{1 if it['is_group'] else 0}"><td data-v="{html.escape(it['name'])}">{ava}<a href="{html.escape(it['file'])}">{html.escape(it['name'])}</a> {tag}</td>
 <td class="num" data-t="num" data-v="{it['count']}">{it['count']}</td><td class="num" data-t="num" data-v="{it['thumbs']}">{it['thumbs'] or '—'}</td><td class="dt" data-v="{it['end']}">{it['end'][:10]}</td>{bk_cell}<td data-v="{html.escape(it['full'])}"><span class="ellip" title="{html.escape(it['full'])}">{html.escape(it['last'])}</span></td></tr>""")
 
     total = sum(it['count'] for it in index_rows)
+    n_group = sum(1 for it in index_rows if it['is_group'])
+    n_single = len(index_rows) - n_group
 
     bk_bar = bk_det = ''
     if bk_sum:
@@ -961,6 +997,7 @@ def main():
 <div class="meta">{len(index_rows)} 个会话 · {total} 条消息 · 生成于 {time.strftime('%Y-%m-%d %H:%M')}</div></header>
 <div class="wrap"><input type="search" id="q" placeholder="搜会话名 / 微信号 / 聊天内容关键字…" autocomplete="off">
 {bk_bar}
+<div class="tabs"><button class="tb on" data-g="all">全部 <b>{len(index_rows)}</b></button><button class="tb" data-g="0">单聊 <b>{n_single}</b></button><button class="tb" data-g="1">群聊 <b>{n_group}</b></button></div>
 <table id="t"><thead><tr>
 <th data-col="0">会话<span class="ar"></span></th>
 <th data-col="1" class="sorted desc">消息数<span class="ar">▼</span></th>
@@ -980,6 +1017,12 @@ const tbody=document.querySelector('#t tbody');
 const ths=[...document.querySelectorAll('#t th')];
 const hits=document.getElementById('hits');
 const state={{col:1,asc:false}};
+let tabG='all';
+const tabs=[...document.querySelectorAll('.tb')];
+tabs.forEach(function(b){{b.addEventListener('click',function(){{
+  tabs.forEach(function(x){{x.classList.remove('on');}});
+  b.classList.add('on'); tabG=b.dataset.g; run();
+}});}});
 const T=R.map(function(x){{return String(x[3]).toLowerCase();}});
 
 function sortBy(col,asc){{
@@ -1020,7 +1063,7 @@ function run(){{
   const rows=[...tbody.querySelectorAll('tr')];
   let convHit=0;
   rows.forEach(r=>{{
-    const ok=!kw||r.dataset.n.toLowerCase().includes(kw);
+    const ok=(!kw||r.dataset.n.toLowerCase().includes(kw))&&(tabG==='all'||r.dataset.g===tabG);
     r.style.display=ok?'':'none';
     if(ok&&kw) convHit++;
   }});

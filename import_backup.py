@@ -17,6 +17,35 @@ import sys
 import time
 
 SELF = ''
+
+
+def rd_varint(b, i):
+    r = 0
+    s = 0
+    while True:
+        x = b[i]
+        i += 1
+        r |= (x & 0x7F) << s
+        s += 7
+        if not x & 0x80:
+            return r, i
+
+
+def media_id(hx):
+    """消息里 field11 的 hex → MediaIdStr（如 xxx_backup / xxx_backup__thumb）"""
+    if not hx:
+        return ''
+    try:
+        raw = bytes.fromhex(hx)
+        tag, i = rd_varint(raw, 0)
+        if tag >> 3 != 1 or (tag & 7) != 2:
+            return ''
+        ln, i = rd_varint(raw, i)
+        return raw[i:i + ln].decode('utf-8', 'ignore')
+    except Exception:
+        return ''
+
+
 # 群消息正文前缀：wxid_xxx:  /  自定义微信号:  /  数字@chatroom:
 GROUP_PREFIX = re.compile(r'^([A-Za-z0-9_\-@\.]{4,64}):\n')
 
@@ -48,7 +77,7 @@ def main():
     out.execute('''CREATE TABLE MSG(localId INTEGER PRIMARY KEY, Type INT, SubType INT,
                    IsSender INT, CreateTime INT, StrTalker TEXT, StrContent TEXT,
                    DisplayContent TEXT, BytesExtra BLOB, CompressContent BLOB,
-                   MsgSvrID INT, SenderHint TEXT)''')
+                   MsgSvrID INT, SenderHint TEXT, MediaId TEXT)''')
     out.execute('''CREATE TABLE BkSession(talker TEXT PRIMARY KEY, nick TEXT,
                    start INT, end INT, cnt INT)''')
     # 用户多次备份到同一目录会累积重复消息（同 MsgSvrID 最多出现过 16 次），
@@ -75,7 +104,8 @@ def main():
             is_sender = 1 if (self_wxid and sender == self_wxid) else 0
             lid += 1
             buf.append((lid, m.get('ty', 0), 0, is_sender, m.get('ts', 0), talker,
-                        content, '', None, None, m.get('svr', 0), sender))
+                        content, '', None, None, m.get('svr', 0), sender,
+                        media_id(m.get('m'))))
             st = talkers.setdefault(talker, [m.get('ts', 0), m.get('ts', 0), 0])
             if m.get('ts', 0) < st[0]:
                 st[0] = m['ts']
@@ -83,13 +113,13 @@ def main():
                 st[1] = m['ts']
             st[2] += 1
             if len(buf) >= 20000:
-                out.executemany('INSERT OR REPLACE INTO MSG VALUES(?,?,?,?,?,?,?,?,?,?,?,?)', buf)
+                out.executemany('INSERT OR REPLACE INTO MSG VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', buf)
                 buf.clear()
                 n += 20000
                 sys.stdout.write('\r  %d 条' % n)
                 sys.stdout.flush()
     if buf:
-        out.executemany('INSERT OR REPLACE INTO MSG VALUES(?,?,?,?,?,?,?,?,?,?,?,?)', buf)
+        out.executemany('INSERT OR REPLACE INTO MSG VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', buf)
         n += len(buf)
     out.execute('CREATE INDEX ix_talk ON MSG(StrTalker, CreateTime)')
     out.execute('CREATE INDEX ix_svr ON MSG(StrTalker, MsgSvrID)')
