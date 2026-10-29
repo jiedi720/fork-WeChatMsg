@@ -632,9 +632,9 @@ header .meta{font-size:12px;color:var(--sub)}
 .msg.me{flex-direction:row-reverse}
 .avatar{width:34px;height:34px;border-radius:4px;background:var(--ava);flex:0 0 34px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;overflow:hidden;cursor:pointer}
 .avatar img{width:100%;height:100%;object-fit:cover}
-.ava-sm{width:22px;height:22px;border-radius:4px;object-fit:cover;vertical-align:-6px;margin-right:6px}
+.ava-sm{width:22px;height:22px;border-radius:4px;object-fit:cover;vertical-align:middle;margin-right:6px}
 .ava-ph{display:inline-flex;width:22px;height:22px;border-radius:4px;background:var(--ava);color:#fff;
-font-size:12px;line-height:1;align-items:center;justify-content:center;vertical-align:-6px;margin-right:6px}
+font-size:12px;line-height:1;align-items:center;justify-content:center;vertical-align:middle;margin-right:6px}
 .bubble{max-width:min(560px,72vw);background:var(--other);border-radius:6px;padding:8px 12px;white-space:pre-wrap;word-break:break-word;box-shadow:0 0 1px #0001}
 .mid{min-width:0}
 .msg.me .bubble{background:var(--me)}
@@ -703,6 +703,8 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--text2)}
 input[type=search]{width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:6px;margin:10px 0;
 font-size:13px;background:var(--card);color:var(--text)}
 .tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:8px;background:#1a6fc422;color:var(--link)}
+#t .tag{display:none}
+body[data-tab="all"] #t .tag{display:inline-block}
 .tag.g{background:#1f8b3a22;color:#2fa457}
 .tag.s{background:#8a6d2f22;color:var(--gold)}
 .ltag{display:inline-block;font-size:10px;line-height:1.6;padding:0 5px;margin-left:4px;
@@ -774,6 +776,18 @@ body.chat .thmseg{right:150px}
 header:has(.thmseg){padding-right:100px}
 .cbtn{right:130px}
 header:has(.cbtn){padding-right:214px}
+.ybtn{right:183px}
+header:has(.ybtn){padding-right:270px}
+.dpy{top:76px;width:344px}
+.yp-head{padding:9px 12px;font-size:12px;color:var(--sub);border-bottom:1px solid var(--line)}
+.yp-y{position:sticky;top:0;z-index:2;background:var(--card);font-size:12px;font-weight:700;padding:10px 12px 4px;color:var(--text);border-bottom:1px solid var(--line)}
+.yp-r{display:flex;align-items:center;gap:7px;padding:3px 12px;font-size:12px}
+.yp-r.off{opacity:.4}
+.yp-m{width:32px;flex:none;color:var(--sub);font-variant-numeric:tabular-nums}
+.yp-r .ca{width:16px;height:16px;border-radius:3px;font-size:9px}
+.yp-n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.yp-n:hover{color:var(--link)}
+.yp-c{flex:none;color:var(--sub);font-variant-numeric:tabular-nums}
 .dpcal{top:76px;width:332px}
 .ctt{position:fixed;z-index:60;display:none;background:var(--card);border:1px solid var(--line);
 border-radius:9px;box-shadow:0 10px 28px #0003;padding:9px 10px;font-size:12px;max-width:290px}
@@ -1264,7 +1278,9 @@ def main():
 <header><h1>微信聊天记录导出</h1>
 <div class="meta">{len(index_rows)} 个会话 · {total} 条消息 · 生成于 {time.strftime('%Y-%m-%d %H:%M')}</div>
 <div class="thmseg" id="thm"><button data-m="auto" title="跟随系统">🌗</button><button data-m="light" title="浅色模式">☀️</button><button data-m="dark" title="深色模式">🌙</button></div>
+<button class="tbtn ybtn" id="ybtn" title="年度统计：每年每月聊得最多的人">📊</button>
 <button class="tbtn cbtn" id="cbtn" title="按日期查找：悬停看当天和谁聊了多少条">📅</button>
+<div class="dpanel dpy" id="ypanel"><div class="yp-head">年度统计 · 每月聊天最多的人</div><div class="dp-body" id="yg"></div></div>
 <div class="dpanel dpcal" id="cpanel">
 <div class="ctabs"><button class="ctb" data-g="all">全部</button><button class="ctb on" data-g="0">单聊</button><button class="ctb" data-g="1">群聊</button></div>
 <div class="dp-head"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
@@ -1294,10 +1310,11 @@ const ths=[...document.querySelectorAll('#t th')];
 const hits=document.getElementById('hits');
 const state={{col:1,asc:false}};
 let tabG='0';
+document.body.dataset.tab=tabG;
 const tabs=[...document.querySelectorAll('.tb')];
 tabs.forEach(function(b){{b.addEventListener('click',function(){{
   tabs.forEach(function(x){{x.classList.remove('on');}});
-  b.classList.add('on'); tabG=b.dataset.g; run();
+  b.classList.add('on'); tabG=b.dataset.g; document.body.dataset.tab=tabG; run();
 }});}});
 const T=R.map(function(x){{return String(x[3]).toLowerCase();}});
 
@@ -1475,6 +1492,7 @@ cg.addEventListener('click',function(e){{
 ctt.addEventListener('mouseenter',function(){{clearTimeout(hideT);}});
 ctt.addEventListener('mouseleave',function(){{if(!pinned) scheduleHide();}});
 cbtn.addEventListener('click',function(e){{
+  var _yp=document.getElementById('ypanel'); if(_yp) _yp.classList.remove('on');
   cpanel.classList.toggle('on');
   if(cpanel.classList.contains('on')){{
     var a=pinnedDay ? cg.querySelector('a.cd[data-d="'+pinnedDay+'"]') : null;
@@ -1498,6 +1516,48 @@ document.addEventListener('click',function(e){{
     ctt.classList.remove('on');
   }}
 }});
+
+/* ---- 年度统计：每年每月聊得最多的人 ---- */
+(function(){{
+  var ybtn=document.getElementById('ybtn'), ypanel=document.getElementById('ypanel'),
+      yg=document.getElementById('yg');
+  if(!ybtn||!ypanel||!yg) return;
+  var YM={{}};
+  Object.keys(CAL).forEach(function(day){{
+    var ym=day.slice(0,7), o=YM[ym]||(YM[ym]={{}}), lst=CAL[day];
+    for(var i=0;i<lst.length;i++){{ o[lst[i][0]]=(o[lst[i][0]]||0)+lst[i][1]; }}
+  }});
+  var years={{}};
+  Object.keys(YM).forEach(function(ym){{
+    var y=ym.slice(0,4); (years[y]||(years[y]=[])).push(ym);
+  }});
+  var h='';
+  Object.keys(years).sort().reverse().forEach(function(y){{
+    h+='<div class="yp-y">'+y+' 年</div>';
+    for(var m=1;m<=12;m++){{
+      var key=y+'-'+(m<10?'0'+m:''+m), o=YM[key];
+      if(!o){{ h+='<div class="yp-r off"><span class="yp-m">'+m+'月</span><span class="yp-n">—</span></div>'; continue; }}
+      var best=-1, bc=0, k;
+      for(k in o){{ if(o[k]>bc){{ bc=o[k]; best=+k; }} }}
+      var c=CONV[best]||['?','#'];
+      h+='<div class="yp-r"><span class="yp-m">'+m+'月</span>'
+        + (c[3] ? '<img class="ca" src="media/avatar/'+c[3]+'" alt="">'
+                : '<span class="ca">'+esc([...String(c[0])][0]||'')+'</span>')
+        + '<a class="yp-n" href="'+c[1]+'">'+esc(c[0])+'</a>'
+        + '<span class="yp-c">'+bc.toLocaleString()+'</span></div>';
+    }}
+  }});
+  yg.innerHTML=h;
+  ybtn.addEventListener('click',function(e){{
+    ypanel.classList.toggle('on');
+    cpanel.classList.remove('on');
+    e.stopPropagation();
+  }});
+  document.addEventListener('click',function(e){{
+    if(!e.target.closest('#ypanel') && !e.target.closest('#ybtn')) ypanel.classList.remove('on');
+  }});
+}})();
+
 </script>
 <script>(function(){{var box=document.getElementById('thm');if(!box)return;
 var mq=matchMedia('(prefers-color-scheme: dark)');
