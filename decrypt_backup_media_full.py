@@ -37,6 +37,26 @@ def kind(b):
     return None
 
 
+def wxgf_first_frame(data):
+    """wxgf 是微信私有的 HEVC 动图容器：跳过 33 字节头，后面是标准 Annex-B 流
+    （VPS 40010c01 / SPS / PPS / IDR）。取首帧转 RGBA 位图。"""
+    p = data.find(b'\x00\x00\x00\x01\x40\x01')
+    if p < 0:
+        return None
+    try:
+        import av
+        import io as _io
+        c = av.open(_io.BytesIO(data[p:]), format='hevc')
+        img = None
+        for fr in c.decode(video=0):
+            img = fr.to_image()
+            break
+        c.close()
+        return img
+    except Exception:
+        return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--db', default=r'D:\Temp\wxold\Backup_phone.plain.db')
@@ -103,7 +123,7 @@ def main():
             print('已有产物 %d 张，本轮只补缺' % len(mapping))
         except Exception:
             pass
-    done = ok = bad = 0
+    done = ok = bad = wxgf_ok = 0
     bytes_out = 0
     t0 = time.time()
     handles = {}
@@ -156,9 +176,22 @@ def main():
         data = bytes(buf)
         ext = kind(data)
         if not ext:
-            # wxgf（微信私有 HEVC 动图容器）到不了这里当图片用，计为跳过
-            bad += 1
-            continue
+            if data[:4] == b'wxgf':
+                im = wxgf_first_frame(data)
+                if im is None:
+                    bad += 1
+                    continue
+                if max(im.size) > args.max_w:
+                    sc = args.max_w / max(im.size)
+                    im = im.resize((max(1, round(im.size[0] * sc)), max(1, round(im.size[1] * sc))),
+                                   Image.LANCZOS)
+                o = io.BytesIO()
+                im.convert('RGB').save(o, 'JPEG', quality=args.quality, optimize=True)
+                data, ext = o.getvalue(), 'jpg'
+                wxgf_ok += 1
+            else:
+                bad += 1
+                continue
 
         # 太大就缩：聊天记录翻看用不到 4000px 的原图
         if Image is not None and ext in ('jpg', 'png', 'bmp'):
@@ -187,8 +220,8 @@ def main():
         bytes_out += len(data)
 
     json.dump(mapping, open(args.map, 'w', encoding='utf-8'), ensure_ascii=False)
-    print('\n解出原图 %d 张（跳过 %d），%.2f GB，耗时 %.0f s' % (
-        ok, bad, bytes_out / 1073741824, time.time() - t0))
+    print('\n解出原图 %d 张（其中 wxgf 动图首帧 %d 张，跳过 %d），%.2f GB，耗时 %.0f s' % (
+        ok, wxgf_ok, bad, bytes_out / 1073741824, time.time() - t0))
     print('映射表 %s' % args.map)
 
 

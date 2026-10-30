@@ -22,7 +22,8 @@ FILES = [
     'parse_backup_text.py', 'import_backup.py', 'decrypt_backup_media.py', 'decrypt_backup_voice.py',
     'decrypt_emoji.py', 'fix_cal_pages.py', 'fix_legacy_css.py',
     'decrypt_backup_media_full.py',
-    'fetch_link_thumbs.py',
+    'fetch_link_thumbs.py', 'link_videos.py', 'decrypt_backup_video.py',
+    'link_files.py', 'fix_hevc_videos.py', 'group_override.txt',
 ]
 
 def sanitize(text):

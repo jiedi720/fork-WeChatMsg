@@ -173,6 +173,11 @@ BK_MEDIA = {}
 BF_MEDIA = {}
 OG_MAP = {}
 VOICE_MAP = {}
+VID_THUMB = {}
+VID_FILE = {}
+BK_VIDEO = {}
+FILE_MAP = {}
+LOCAL_IMG = {}
 _IMG_SIZE = {}
 
 
@@ -272,6 +277,37 @@ def build_media_index(media_dir):
     return idx
 
 
+def build_local_img_index(msg_db, media_idx):
+    """{(会话, 时间戳): (原图, 列表用图)} —— 本机微信缓存的原图。
+    手机备份里的图片往往只有缩略图，用时间戳把它对回本机原图。
+
+    msg_db 既可以是单个库文件，也可以是 Msg 目录：微信 3.9 把历史消息
+    拆在 MSG0~MSG3.db 里。实测这些分库的 (会话, 时间戳) 与 MSG.db 完全重叠，
+    所以多读不会多出图片，这里保留目录支持只是兜底。"""
+    idx = {}
+    if not media_idx:
+        return idx
+    dbs = []
+    if msg_db and os.path.isdir(msg_db):
+        for f in sorted(os.listdir(msg_db)):
+            if re.fullmatch(r'MSG\d[\w\-]*\.db', f, re.I) or f.lower() == 'msg.db':
+                dbs.append(os.path.join(msg_db, f))
+    elif msg_db and os.path.exists(msg_db):
+        dbs = [msg_db]
+    for p in dbs:
+        try:
+            c = sqlite3.connect('file:%s?mode=ro' % p.replace('\\', '/'), uri=True)
+            rows = c.execute('SELECT StrTalker, CreateTime, BytesExtra FROM MSG WHERE Type=3').fetchall()
+            c.close()
+        except sqlite3.Error:
+            continue
+        for talker, ct, be in rows:
+            m = media_for_message(be, media_idx)
+            if m:
+                idx[(talker, ct)] = (m['full'], m['thumb'])
+    return idx
+
+
 def media_for_message(bytes_extra, media_idx):
     """从 BytesExtra 里找图片文件，优先原图"""
     if not bytes_extra or not media_idx:
@@ -343,8 +379,148 @@ def uncompress_xml(compress):
 APPTYPE_LABEL = {
     '3': '音乐', '4': '链接', '5': '链接', '6': '文件', '8': '表情包',
     '19': '聊天记录', '33': '小程序', '36': '小程序', '50': '通话',
-    '51': '视频号', '57': '回复', '87': '群公告', '2000': '转账', '2001': '红包',
+    '51': '视频号', '53': '接龙', '57': '回复', '62': '不支持的内容', '76': '音乐',
+    '87': '群公告', '2000': '转账', '2001': '红包',
 }
+
+# 文件卡片左侧色块按扩展名取色
+EXT_COLOR = {
+    'pdf': '#e0484b', 'doc': '#2b579a', 'docx': '#2b579a',
+    'xls': '#217346', 'xlsx': '#217346', 'csv': '#217346',
+    'ppt': '#d24726', 'pptx': '#d24726',
+    'zip': '#b8860b', 'rar': '#b8860b', '7z': '#b8860b',
+    'txt': '#6b7280', 'md': '#6b7280', 'json': '#6b7280',
+    'jpg': '#0ea5e9', 'jpeg': '#0ea5e9', 'png': '#0ea5e9', 'gif': '#0ea5e9',
+    'mp4': '#7c3aed', 'mov': '#7c3aed', 'mp3': '#0f9d58', 'wav': '#0f9d58',
+    'py': '#3572a5', 'js': '#b8860b', 'html': '#d24726',
+}
+
+
+# 把这几类微信标签的**单聊**合并成一个「工作」分类
+WORK_LABELS = ['博世', '蔚来', '安财', '前同事', '工作业务']
+# 求职：猎头 / HR 标签，或备注名以「猎头-」「HR-」开头；offer 也算求职
+JOB_LABELS = ['猎头', 'HR', 'offer']
+# 其他：租房 / 房东 / 中介 / 快递 / 游戏 / 报销发票 / ET5 标签；商家、外卖、维修等杂项名字
+OTHER_LABEL_KEYWORDS = ('租房', '快递', '游戏', '报销发票', 'ET5', '外国人', '在日相识')
+OTHER_NAME_KEYWORDS = ('租房', '房东', '中介', '外卖', '酒店', '出租', '维修', '轮毂',
+                       '驿站', '美食', '机器人', '充值', '电信', '道路救', '改色',
+                       '软件', '泊寓', '工作室')
+# 同学：初中 / 大工 / 东工大 / 材日1001 / 熊井村石研 等标签
+CLASSMATE_LABELS = ['初中', '大工', '东工大', '材日1001', '熊井村石', '高中']
+MANUAL_LABELS = {'刘东来': ['初中'], 'julia-ju': ['猎头'], '叶子': ['猎头'],
+                 'Qi Hu 🍓': ['前同事', '蔚来'], 'mj💠7915': ['ET5'], 'sha456sha55': ['猎头']}
+# 手工备注（数据库里没有备注的联系人）：wxid -> 显示名
+MANUAL_NAMES = {'wxid_your_account': '任雪琦'}
+# 分组兜底名单：group_override.txt 每行「组名|关键字」，标准规则没命中的再按它归组
+_group_f = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'group_override.txt')
+GROUP_OVERRIDES = []
+if os.path.exists(_group_f):
+    with open(_group_f, encoding='utf-8') as _f:
+        for _l in _f:
+            _l = _l.strip()
+            if _l and not _l.startswith('#') and '|' in _l:
+                _g, _kw = _l.split('|', 1)
+                _g = {'工作': 'work', '求职': 'job', '其他': 'other'}.get(_g.strip())
+                if _g:
+                    GROUP_OVERRIDES.append((_g, _kw.strip()))
+
+
+def fmt_size(n):
+    try:
+        n = float(n)
+    except (TypeError, ValueError):
+        return ''
+    if n < 1024:
+        return '%d B' % n
+    for u in ('KB', 'MB', 'GB'):
+        n /= 1024.0
+        if n < 1024 or u == 'GB':
+            return '%.1f %s' % (n, u)
+    return ''
+
+
+
+def parse_rich49(s):
+    """把 type=49 的应用消息拆成可渲染的结构。
+
+    微信把内容塞在 xml 里，而且 `<content>` / `<recorditem>` 里还会嵌一层
+    xml（引用原文、合并转发的条目），所以全部走非贪婪正则 + 去标签。
+    """
+    d = {'kind': 'other', 'title': '', 'des': '', 'url': '', 'srcname': '',
+         'fileext': '', 'size': 0, 'refname': '', 'reftext': '', 'lines': [], 'count': 0}
+    if not s:
+        return d
+    s2 = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', s)
+
+    def tidy(x):
+        x = re.sub(r'<[^>]*>|]]>', '', html.unescape(x or '')).strip()
+        return re.sub(r'[ \t]+', ' ', x)
+
+    def grab(tag, txt=None):
+        src = s2 if txt is None else txt
+        m = re.search(r'<%s\b[^>]*>\s*(?:<!\[CDATA\[)?(.*?)\s*(?:\]\]>)?\s*</%s>' % (tag, tag), src, re.S)
+        return m.group(1).strip() if m else ''
+
+    def clean(x):
+        x = tidy(x)
+        return '' if x.lower() in ('null', 'none', 'undefined') else x
+
+    d['title'] = clean(grab('title'))
+    d['des'] = clean(grab('des'))
+    m = re.search(r'https?://[^\s"\'<>\u3000\\]+', s2)
+    if m:
+        u = m.group(0)
+        for _ in range(3):
+            u = u.replace('&amp;', '&')
+        d['url'] = re.split(r'[\s$"\'<>\\]', u)[0].rstrip('.,);\'"')
+    d['srcname'] = tidy(grab('sourcedisplayname'))
+    d['fileext'] = tidy(grab('fileext')).lower()
+    _tl = grab('totallen')
+    if _tl.isdigit():
+        d['size'] = int(_tl)
+
+    # 引用回复：<refermsg> 里放被引用的那条
+    rm = re.search(r'<refermsg>(.*?)</refermsg>', s2, re.S)
+    if rm:
+        r = rm.group(1)
+        d['kind'] = 'reply'
+        d['refname'] = tidy(grab('displayname', r))
+        rc = html.unescape(grab('content', r))
+        if '<msg' in rc or '<?xml' in rc or '<appmsg' in rc:
+            # 引用的是链接/文件/图片这类富媒体，正文是一整段 xml —— 只取它的标题
+            _rt = tidy(grab('title', rc))
+            if '<img' in rc:
+                d['reftext'] = '[图片]'
+            elif '<videomsg' in rc:
+                d['reftext'] = '[视频]'
+            elif _rt:
+                d['reftext'] = '[链接] ' + _rt
+            else:
+                d['reftext'] = '[链接/文件]'
+        elif '<img' in rc:
+            d['reftext'] = '[图片]'
+        elif '<videomsg' in rc or '<video' in rc:
+            d['reftext'] = '[视频]'
+        else:
+            d['reftext'] = tidy(rc)
+
+    # 合并转发：<recorditem> 里是 CDATA 包着的 <recordinfo>
+    ri = re.search(r'<recorditem>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</recorditem>', s2, re.S)
+    if ri:
+        r = ri.group(1)
+        d['kind'] = 'record'
+        d['title'] = tidy(grab('title', r)) or d['title']
+        for ln in re.split(r'\r?\n', html.unescape(grab('desc', r))):
+            ln = tidy(ln)
+            if ln:
+                d['lines'].append(ln)
+        try:
+            d['count'] = int(re.search(r'count="(\d+)"', r).group(1))
+        except (AttributeError, TypeError, ValueError):
+            d['count'] = len(d['lines'])
+
+    return d
+
 
 
 def parse_appmsg2(s):
@@ -369,7 +545,8 @@ def parse_appmsg2(s):
         for _ in range(3):
             url = url.replace('&amp;', '&')
         url = re.split(r'[\s$"\'<>\\]', url)[0].rstrip('.,);\'"')
-    ty = re.search(r'<type>\s*(\d{1,4})', s2) or re.search(r'[^-a-z]type>\s*(\d{1,4})', s2)
+    ty = (re.search(r'<type>\s*(?:<!\[CDATA\[)?\s*(\d{1,4})', s2)
+          or re.search(r'[^-a-z]type>\s*(?:<!\[CDATA\[)?\s*(\d{1,4})', s2))
     atype = ty.group(1) if ty else ''
 
     def tidy(x):
@@ -401,6 +578,8 @@ def load_contacts(mm_path):
 
 
 def display_name(uname, contacts):
+    if uname in MANUAL_NAMES:
+        return MANUAL_NAMES[uname]
     c = contacts.get(uname)
     if c:
         return c['remark'] or c['nick'] or c['alias'] or uname
@@ -472,15 +651,66 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
                 text = f'<div class="lk">{body}</div>'
             kind = 'link'
         else:
-            head = f'[{label}] '
-            if atype == '6':
-                head = '[文件] '
+            ri = parse_rich49(xml)
+            if os.environ.get('WXDBG') == '49':
+                print('DBG49 atype=%r kind=%r title=%r' % (atype, ri['kind'], (ri['title'] or '')[:24]),
+                      file=sys.stderr)
+            if atype == '57' or ri['kind'] == 'reply':
+                _n, _c = ri['refname'], ri['reftext']
+                _q = ((f'<span class="rp-n">{html.escape(_n)}</span>') if _n else '')
+                _q += html.escape(_c[:300]) if _c else '（引用内容已失效）'
+                _t = ri['title'] or title or ''
+                text = (f'<div class="rp"><div class="rp-q">{_q}</div>'
+                        f'<div class="rp-t">{html.escape(_t)}</div></div>')
+                kind = 'reply'
+            elif atype in ('76', '3'):
+                _t = ri['title'] or title or '音乐'
+                _a = ri['des'] or des or ''
+                _src = ri['srcname'] or ''
+                _in = (f'<span class="mc-i">♪</span><span class="mc-t">'
+                       f'<span class="mc-a">{html.escape(_t)}</span>'
+                       + (f'<span class="mc-b">{html.escape(_a)}</span>' if _a else '')
+                       + (f'<span class="mc-c">{html.escape(_src)}</span>' if _src else '')
+                       + '</span>')
+                if ri['url']:
+                    text = (f'<a class="mc" href="{html.escape(ri["url"])}" target="_blank" '
+                            f'rel="noreferrer">{_in}</a>')
+                else:
+                    text = f'<span class="mc">{_in}</span>'
+                kind = 'music'
+            elif atype == '6':
+                _t = ri['title'] or title or '文件'
+                _ext = (ri['fileext'] or os.path.splitext(_t)[1].lstrip('.')).lower()[:5]
+                _sz = fmt_size(ri['size']) if ri['size'] else (ri['des'] or des or '')
+                _bg = EXT_COLOR.get(_ext, '#8a8f99')
+                _loc = FILE_MAP.get(_t)
+                _in = (f'<span class="fc-i" style="background:{_bg}">'
+                       f'{html.escape((_ext or "file").upper())}</span>'
+                       f'<span class="fc-t"><span class="fc-n">{html.escape(_t)}</span>'
+                       + (f'<span class="fc-s">{html.escape(_sz)}</span>' if _sz else '')
+                       + '</span>')
+                if _loc:
+                    text = (f'<a class="fc" href="../media/{html.escape(_loc)}" '
+                            f'title="点击打开本机文件">{_in}</a>')
+                else:
+                    text = f'<span class="fc">{_in}</span>'
+                kind = 'file'
             elif atype == '19':
-                head = '[合并转发的聊天记录] '
-            elif atype == '57':
-                head = '[回复] '
-            text = head + (title or '(内容无法解析)')
-            kind = 'card'
+                _t = ri['title'] or title or '聊天记录'
+                _ls = ri['lines'][:8]
+                _cnt = ri['count'] or len(ri['lines'])
+                _body = '\n'.join(html.escape(x) for x in _ls)
+                _more = (f'<span class="rc-more">共 {_cnt} 条，这里显示前 {len(_ls)} 条</span>'
+                         if _cnt > len(_ls) else '')
+                text = (f'<div class="rc"><div class="rc-h">{html.escape(_t)}'
+                        f'<i>{_cnt} 条</i></div>'
+                        + (f'<div class="rc-l">{_body}</div>' if _body else '')
+                        + f'{_more}</div>')
+                kind = 'record'
+            else:
+                head = f'[{label}] '
+                text = head + (ri['title'] or title or ri['des'] or des or '(内容无法解析)')
+                kind = 'card'
     elif mtype == 10000:
         raw = content or ''
         if '<revoked' in raw or 'revokemsg' in raw:
@@ -523,21 +753,43 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
             text = '[位置]'
             kind = 'placeholder'
     elif mtype == 42:
-        text = '[名片] ' + (content or '')[:40]
-        kind = 'card'
+        # <msg username="wxid_xxx" nickname="张三" alias="..." ... />
+        _raw = content or ''
+        _nk = re.search(r'\bnickname="([^"]*)"', _raw)
+        _al = re.search(r'\balias="([^"]*)"', _raw)
+        _nm = html.unescape(_nk.group(1)) if _nk else ''
+        _al = html.unescape(_al.group(1)) if _al else ''
+        if _nm or _al:
+            text = ('[名片] ' + (_nm or _al)
+                    + (f'（{_al}）' if _nm and _al else ''))
+            kind = 'card'
+        elif _raw.strip().startswith('<'):
+            text = '[名片]'
+            kind = 'card'
+        else:
+            text = '[名片] ' + _raw[:40]
+            kind = 'card'
     elif mtype == 3:
         _base = media_bk[:-7] if media_bk.endswith('__thumb') else media_bk
         bfimg = BF_MEDIA.get(_base) if _base else None
         bkimg = BK_MEDIA.get(media_bk) if media_bk else None
         if bfimg:
-            # 列表里先放缩略图（刷得快），点开看的是备份里的真原图
-            src = bkimg or bfimg
-            dim = image_size(src)
+            # 直接显示备份原图（已压到 ≤1280px），列表里不再挂 120px 缩略图
+            dim = image_size(bfimg)
             dim_s = f' width="{dim[0]}" height="{dim[1]}"' if dim else ''
             text = (f'<a href="../media/{html.escape(bfimg)}" data-zoom>'
-                    f'<img class="pic" loading="lazy"{dim_s} src="../media/{html.escape(src)}" alt="图片"></a>')
+                    f'<img class="pic" loading="lazy"{dim_s} src="../media/{html.escape(bfimg)}" alt="图片"></a>')
             kind = 'image'
             thumb_only = False
+        elif LOCAL_IMG.get((talker, create_time)):
+            # 本机有原图就用它
+            _full, _th = LOCAL_IMG[(talker, create_time)]
+            dim = image_size(_full)
+            dim_s = f' width="{dim[0]}" height="{dim[1]}"' if dim else ''
+            text = (f'<a href="../media/{html.escape(_full)}" data-zoom>'
+                    f'<img class="pic" loading="lazy"{dim_s} src="../media/{html.escape(_full)}" alt="图片"></a>')
+            kind = 'image'
+            thumb_only = '_t.' in _full
         elif bkimg:
             dim = image_size(bkimg)
             dim_s = f' width="{dim[0]}" height="{dim[1]}"' if dim else ''
@@ -560,6 +812,39 @@ def render_message(row, contacts, self_names, media_idx=None, avatar_map=None, s
             else:
                 text = '[图片]'
                 kind = 'placeholder'
+    elif mtype == 43:
+        # 视频：XML 里 length=mp4 字节数、cdnthumblength=封面字节数，按大小匹配本地缓存
+        _raw = content or ''
+        _ln = re.search(r'\blength="(\d+)"', _raw)
+        _tl = re.search(r'\bcdnthumblength="(\d+)"', _raw)
+        _pl = re.search(r'\bplaylength="(\d+)"', _raw)
+        _sec = int(_pl.group(1)) if _pl else 0
+        _dur = f'{_sec // 60}:{_sec % 60:02d}' if _sec else ''
+        _mp4 = VID_FILE.get(_ln.group(1)) if _ln else None
+        _jpg = VID_THUMB.get(_tl.group(1)) if _tl else None
+        _vb = media_bk[:-7] if media_bk.endswith('__thumb') else media_bk
+        _bkv = BK_VIDEO.get(_vb) if _vb else None
+        if not _mp4 and _bkv and _bkv.get('v'):
+            _mp4 = _bkv['v']
+            if not _jpg and _bkv.get('t'):
+                _jpg = _bkv['t']
+            if not _sec and _bkv.get('d'):
+                _sec = int(_bkv['d'])
+                _dur = f'{_sec // 60}:{_sec % 60:02d}'
+        if _mp4:
+            _poster = f' poster="../media/{html.escape(_jpg)}"' if _jpg else ''
+            text = (f'<video class="vid" controls preload="none" playsinline{_poster} '
+                    f'src="../media/{html.escape(_mp4)}"></video>'
+                    + (f'<span class="dur">{_dur}</span>' if _dur else ''))
+            kind = 'video'
+        elif _jpg:
+            text = (f'<div class="vidph"><img loading="lazy" src="../media/{html.escape(_jpg)}" alt="视频">'
+                    f'<span class="vplay">▶</span>'
+                    + (f'<span class="vdur">{_dur}</span>' if _dur else '') + '</div>')
+            kind = 'video'
+        else:
+            text = '[视频]' + (f' {_dur}' if _dur else '') + '（本地无缓存）'
+            kind = 'placeholder'
     elif mtype == 34 and media_bk and VOICE_MAP.get(media_bk):
         v = VOICE_MAP[media_bk]
         text = (f'<audio class="au" controls preload="none" src="../media/{html.escape(v["p"])}">'
@@ -611,7 +896,7 @@ html[data-theme=dark]{color-scheme:dark;--bg:#111112;--panel:#191a1b;--card:#212
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 "Microsoft YaHei","PingFang SC",sans-serif}
 a{color:var(--link);text-decoration:none}
-.wrap{max-width:860px;margin:0 auto;padding:16px;width:100%}
+.wrap{max-width:1100px;margin:0 auto;padding:16px;width:100%}
 header{position:sticky;top:0;background:var(--panel);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:10px 16px;z-index:5}
 /* 会话页：消息按时间从旧到新、自上而下正常排列（DOM 顺序即时间顺序）；
    打开时由页面底部脚本瞬间定位到最末，无动画、无滚动过程 */
@@ -657,6 +942,44 @@ border-radius:8px;padding:11px 12px;color:inherit;max-width:min(430px,74vw);text
 background:var(--chip);display:flex;align-items:center;justify-content:center}
 .lk-i img{width:100%;height:100%;object-fit:cover;display:block}
 .lk-i .ph{font-size:20px;font-weight:600;color:var(--sub)}
+/* 引用回复 */
+.rp{max-width:min(340px,72vw)}
+.rp-q{font-size:12px;line-height:1.5;color:var(--sub);background:var(--chip);border-left:2px solid var(--line);
+border-radius:5px;padding:5px 8px;margin-bottom:6px;max-height:5em;overflow:hidden}
+.rp-q .rp-n{color:var(--link);font-weight:600;margin-right:4px}
+.rp-t{white-space:pre-wrap;word-break:break-word}
+/* 音乐分享 */
+.mc{display:flex;gap:10px;align-items:center;min-width:190px;max-width:min(300px,72vw);
+background:var(--card);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:inherit;
+text-decoration:none}
+.mc:hover{border-color:var(--link);background:var(--hover)}
+.mc-i{width:44px;height:44px;flex:none;border-radius:8px;display:flex;align-items:center;justify-content:center;
+font-size:20px;color:#fff;background:linear-gradient(135deg,#31c27c,#1b8f5c)}
+.mc-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.mc-a{display:block;font-size:13px;font-weight:600;color:var(--text);overflow:hidden;
+text-overflow:ellipsis;white-space:nowrap}
+.mc-b{display:block;font-size:11px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mc-c{display:block;font-size:10px;color:var(--sub);opacity:.8;margin-top:1px}
+/* 文件 */
+.fc{display:flex;gap:10px;align-items:center;min-width:210px;max-width:min(320px,72vw);
+background:var(--card);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:inherit;
+text-decoration:none}
+a.fc:hover{border-color:var(--link);background:var(--hover)}
+.fc-i{width:36px;height:42px;flex:none;border-radius:5px;display:flex;align-items:center;justify-content:center;
+font-size:9px;font-weight:700;letter-spacing:.3px;color:#fff;text-transform:uppercase;line-height:1}
+.fc-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.fc-n{font-size:13px;line-height:1.35;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;
+-webkit-box-orient:vertical;overflow:hidden;word-break:break-all}
+.fc-s{font-size:11px;color:var(--sub)}
+/* 合并转发的聊天记录 */
+.rc{min-width:220px;max-width:min(330px,72vw);background:var(--card);border:1px solid var(--line);
+border-radius:8px;padding:10px 12px}
+.rc-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:13px;font-weight:600;
+color:var(--text);padding-bottom:6px;border-bottom:1px solid var(--line)}
+.rc-h i{font-style:normal;font-size:11px;font-weight:400;color:var(--sub);flex:none}
+.rc-l{margin-top:6px;font-size:12px;line-height:1.55;color:var(--sub);white-space:pre-wrap;
+word-break:break-word;max-height:9.5em;overflow:hidden}
+.rc-more{display:block;margin-top:5px;font-size:11px;color:var(--sub);opacity:.8}
 .bubble.ph{color:var(--chip-t);font-style:normal;background:var(--hi)}
 .bubble.img{padding:3px;background:transparent;box-shadow:none;position:relative}
 .bubble.img.thumb::after{content:"缩略";position:absolute;right:7px;bottom:7px;background:#00000066;color:#fff;
@@ -675,6 +998,15 @@ border-radius:9px;padding:10px 12px;text-decoration:none;color:var(--text)}
 display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .loc-go{color:var(--sub);font-size:18px;flex:none}
 .bubble .dur{font-size:11px;color:var(--sub);margin-left:6px;vertical-align:middle}
+.bubble.vid{padding:4px}
+video.vid{display:block;max-width:300px;max-height:340px;border-radius:4px;background:#000}
+.vidph{position:relative;display:inline-block;line-height:0;cursor:default}
+.vidph img{display:block;max-width:300px;max-height:340px;border-radius:4px;object-fit:cover}
+.vidph .vplay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+width:44px;height:44px;border-radius:50%;background:#000000a6;color:#fff;
+display:flex;align-items:center;justify-content:center;font-size:17px;line-height:1;padding-left:3px}
+.vidph .vdur{position:absolute;right:6px;bottom:6px;background:#000000a6;color:#fff;
+font-size:11px;line-height:1.4;padding:0 5px;border-radius:4px}
 .bubble.img img.pic{display:block;max-width:300px;max-height:300px;height:auto;width:auto;border-radius:4px;cursor:zoom-in}
 .lb{display:none;position:fixed;inset:0;background:#000000cc;z-index:80;align-items:center;justify-content:center;cursor:zoom-out}
 .lb.on{display:flex}
@@ -692,8 +1024,8 @@ body.chat .tbtn{right:150px}
 header:has(.tbtn){padding-right:64px}
 header:has(.dbtn){padding-right:250px}
 .tabs{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:14px 0 10px}
-.tb{border:1px solid var(--line);background:var(--card);color:var(--text2);border-radius:16px;padding:5px 14px;
-font-size:13px;cursor:pointer;font-family:inherit}
+.tb{border:1px solid var(--line);background:var(--card);color:var(--text2);border-radius:16px;padding:5px 12px;
+font-size:13px;cursor:pointer;font-family:inherit;white-space:nowrap}
 .tb.on{background:#07c160;color:#fff;border-color:#07c160}
 .tb b{font-weight:600;margin-left:3px;opacity:.85}
 th.sorted{color:var(--link)}
@@ -714,7 +1046,7 @@ border-radius:14px;background:var(--card);color:var(--text);font-family:inherit;
 td .ellip{display:block;max-width:330px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 td.bkc{color:var(--gold);white-space:nowrap;font-size:12px}
 td.dt{white-space:nowrap}
-@media (min-width:720px){#t{table-layout:fixed}#t th:nth-child(1),#t td:nth-child(1){width:31%}#t th:nth-child(2),#t td:nth-child(2){width:10%}#t th:nth-child(3),#t td:nth-child(3){width:9%}#t th:nth-child(4),#t td:nth-child(4){width:12%}#t th:nth-child(5),#t td:nth-child(5){width:11%}#t th:nth-child(6),#t td:nth-child(6){width:27%}#t td:nth-child(1),#t td:nth-child(4),#t td:nth-child(5){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#t td .ellip{max-width:none}}
+@media (min-width:720px){#t{table-layout:fixed}#t th:nth-child(1),#t td:nth-child(1){width:31%}#t th:nth-child(2),#t td:nth-child(2){width:10%}#t th:nth-child(3),#t td:nth-child(3){width:9%}#t th:nth-child(4),#t td:nth-child(4){width:12%}#t th:nth-child(5),#t td:nth-child(5){width:11%}#t th:nth-child(6),#t td:nth-child(6){width:25%}#t th:nth-child(7),#t td:nth-child(7){width:8%}#t td:nth-child(1),#t td:nth-child(4),#t td:nth-child(5){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#t td .ellip{max-width:none}}
 .bkbar{margin:14px 0 10px;padding:10px 14px;background:var(--hi);border:1px solid var(--line);
 border-radius:8px;font-size:13px;color:var(--gold);line-height:1.7}
 .bkbar b{color:var(--gold)}
@@ -791,7 +1123,48 @@ header:has(.ybtn){padding-right:270px}
 .yp-c{width:46px;flex:none;text-align:right;color:var(--text2);font-variant-numeric:tabular-nums}
 .yp-n{width:88px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
 .yp-n:hover{color:var(--link)}
-.dpcal{top:76px;width:332px}
+.yp-s{display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:3;background:var(--card)}
+.yp-s input{flex:1;min-width:0;font:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--text);outline:none}
+.yp-s input:focus{border-color:var(--link)}
+.yp-s .x{flex:none;width:20px;height:20px;line-height:18px;text-align:center;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--sub);cursor:pointer;font-size:13px;padding:0;display:none}
+.yp-s.has .x{display:block}
+.yp-sum{padding:9px 12px 6px;font-size:12px;color:var(--sub);border-bottom:1px solid var(--line)}
+.yp-sum b{color:var(--text);font-weight:700}
+.yp-hit{display:flex;align-items:center;gap:7px;padding:5px 12px;font-size:12px;cursor:pointer;color:var(--text)}
+.yp-hit:hover{background:var(--chip)}
+.yp-hit .yp-c{width:auto}
+.yp-empty{padding:14px 12px;font-size:12px;color:var(--sub);text-align:center}
+.yp-r{cursor:pointer}
+.yp-r.op,.yp-r:hover{background:var(--hover)}
+.yp-d{padding:2px 12px 7px;border-bottom:1px solid var(--line)}
+.yp-dh{font-size:11px;color:var(--sub);padding:3px 0 4px}
+.yp-dr{display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0;color:var(--text)}
+.yp-dr:hover{color:var(--link)}
+.yp-dn{width:86px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.yp-db{flex:1;min-width:40px;height:5px;background:var(--chip);border-radius:3px;overflow:hidden}
+.yp-db i{display:block;height:100%;background:var(--link);opacity:.7;border-radius:3px}
+.yp-dc{width:46px;flex:none;text-align:right;color:var(--text2);font-variant-numeric:tabular-nums}
+.yp-dp{width:34px;flex:none;text-align:right;color:var(--sub);font-variant-numeric:tabular-nums}
+.yp-dm{font-size:11px;color:var(--sub);padding:3px 0 1px}
+.mdc{text-align:center;white-space:nowrap}
+.mdbtn{display:inline-block;font-size:11px;padding:3px 9px;border:1px solid var(--line);
+border-radius:11px;color:var(--link);text-decoration:none;font-variant-numeric:tabular-nums}
+.mdbtn:hover{background:var(--hover);border-color:var(--link)}
+.dpcal{top:76px;width:332px;position:absolute}
+body.chat .dpcal{top:64px}
+body.chat .ctt{pointer-events:none}
+.dpcal #cg{scrollbar-width:none;-ms-overflow-style:none;padding-right:16px}
+.dpcal .dp-head{padding-right:16px}
+.dpcal #cg::-webkit-scrollbar{width:0;height:0}
+.csl{position:absolute;right:1px;width:15px;z-index:6;cursor:pointer;touch-action:none;user-select:none}
+.csl::before{content:'';position:absolute;left:6px;top:0;bottom:0;width:3px;background:var(--chip);border-radius:2px}
+.csl i{position:absolute;left:3px;width:9px;border-radius:3px;background:var(--sub);opacity:.5;
+transition:opacity .12s;min-height:18px}
+.csl:hover i,.csl.on i{opacity:.95}
+.csl b{position:absolute;right:17px;white-space:nowrap;font-size:11px;font-weight:600;padding:2px 7px;
+border-radius:6px;background:var(--card);border:1px solid var(--line);color:var(--text);
+box-shadow:0 3px 10px #0002;transform:translateY(-50%);display:none;pointer-events:none;font-variant-numeric:tabular-nums}
+.csl.on b{display:block}
 .ctt{position:fixed;z-index:60;display:none;background:var(--card);border:1px solid var(--line);
 border-radius:9px;box-shadow:0 10px 28px #0003;padding:9px 10px;font-size:12px;max-width:290px}
 .ctt.on{display:block}
@@ -814,19 +1187,27 @@ padding:3px 5px;border-radius:5px;color:var(--text)}
 """
 
 
-def write_chat_page(path, talker, msgs, contacts, self_label, avatar='', nav=''):
+def write_chat_page(path, talker, msgs, contacts, self_label, avatar='', nav='',
+                    caldays=None, calpage=None):
     name = display_name(talker, contacts)
     h_ava = f'<img class="ava-sm" src="../media/avatar/{avatar}" alt="">' if avatar else ''
 
     # 每个有消息的日期 -> 条数，交给前端画日历
-    day_count = {}
-    for m in msgs:
-        d = datetime.fromtimestamp(m['time']).strftime('%Y-%m-%d')
-        day_count[d] = day_count.get(d, 0) + 1
+    # caldays：整个会话的日期（跨分片），日历要覆盖全部，而不是只覆盖当前分片
+    if caldays:
+        day_count = caldays
+    else:
+        day_count = {}
+        for m in msgs:
+            d = datetime.fromtimestamp(m['time']).strftime('%Y-%m-%d')
+            day_count[d] = day_count.get(d, 0) + 1
     import json
     day_json = json.dumps(day_count, ensure_ascii=False, separators=(',', ':'))
-    first_dt = datetime.fromtimestamp(msgs[0]['time'])
-    last_dt = datetime.fromtimestamp(msgs[-1]['time'])
+    # 不在本分片的日期 -> 跳到所在分片文件
+    page_json = json.dumps(calpage or {}, ensure_ascii=False, separators=(',', ':'))
+    _ks = sorted(day_count) or [datetime.fromtimestamp(msgs[0]['time']).strftime('%Y-%m-%d')]
+    first_dt = datetime.strptime(_ks[0], '%Y-%m-%d')
+    last_dt = datetime.strptime(_ks[-1], '%Y-%m-%d')
 
     parts = [f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>{html.escape(name)}</title><script>(function(){{var m='auto';try{{m=localStorage.getItem('wxthm')||'auto'}}catch(e){{}}var d=m==='dark'||(m==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches);if(d)document.documentElement.setAttribute('data-theme','dark');}})();</script><style>{CSS}</style></head><body class="chat">
@@ -834,10 +1215,12 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar='', nav='')
 <div class="meta">{html.escape(talker)} · 共 {len(msgs)} 条 · {fmt_ts(msgs[0]['time'])} ~ {fmt_ts(msgs[-1]['time'])} · <a href="../index.html">返回会话列表</a>{nav}</div>
 <div class="thmseg" id="thm"><button data-m="auto" title="跟随系统">🌗</button><button data-m="light" title="浅色模式">☀️</button><button data-m="dark" title="深色模式">🌙</button></div>
 <button class="dbtn" id="dbtn">📅 按日期查找</button>
-<div class="dpanel" id="dpanel">
+<div class="dpanel dpcal" id="dpanel">
 <div class="dp-head"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
-<div class="dp-body" id="cal-grid"></div>
-</div></header>
+<div class="dp-body" id="cg"></div>
+<div class="csl" id="csl" title="拖动快速定位月份"><i></i><b id="cslv"></b></div>
+</div>
+<div class="ctt" id="ctt"></div></header>
 <div class="scroll"><div class="wrap">"""]
     blocks = []
     last_day = None
@@ -863,8 +1246,10 @@ def write_chat_page(path, talker, msgs, contacts, self_label, avatar='', nav='')
             ava = f'<div class="avatar"{attr_s}><img src="../media/avatar/{m["avatar"]}" alt=""></div>'
         else:
             ava = f'<div class="avatar"{attr_s}>{html.escape(initial)}</div>'
-        bubble_cls = 'bubble' + (' card' if m['kind'] == 'card' else '') + (' link' if m['kind'] == 'link' else '') + (' ph' if m['kind'] == 'placeholder' else '') + (' img' if m['kind'] == 'image' else '') + (' stk' if m['kind'] == 'sticker' else '') + (' loc' if m['kind'] == 'location' else '') + (' thumb' if m.get('thumb_only') else '')
-        body = m['text'] if m['kind'] in ('image', 'link', 'voice', 'sticker', 'location') else emoji_html(html.escape(m['text']))
+        bubble_cls = 'bubble' + (' card' if m['kind'] == 'card' else '') + (' link' if m['kind'] == 'link' else '') + (' ph' if m['kind'] == 'placeholder' else '') + (' img' if m['kind'] == 'image' else '') + (' stk' if m['kind'] == 'sticker' else '') + (' loc' if m['kind'] == 'location' else '') + (' vid' if m['kind'] == 'video' else '') + (' thumb' if m.get('thumb_only') else '')
+        body = (m['text'] if m['kind'] in ('image', 'link', 'voice', 'sticker', 'location',
+                                           'video', 'reply', 'music', 'file', 'record')
+                else emoji_html(html.escape(m['text'])))
         blocks.append(f"""<div class="{cls}" id="m{m['id']}">{ava}
 <div class="mid"><div>{who}</div><div class="{bubble_cls}">{body}</div></div>
 <div class="tm">{datetime.fromtimestamp(m['time']).strftime('%H:%M')}</div></div>""")
@@ -923,8 +1308,10 @@ document.addEventListener('click',function(e){
   card.style.left=left+'px'; card.style.top=top+'px';
 });
 var dbtn=document.getElementById('dbtn'), dpanel=document.getElementById('dpanel');
-var DAYS=__DAYS__, Y1=__Y1__, M1=__M1__, Y2=__Y2__, M2=__M2__;
-var grid=document.getElementById('cal-grid');
+var DAYS=__DAYS__, PGS=__PGS__, Y1=__Y1__, M1=__M1__, Y2=__Y2__, M2=__M2__;
+var grid=document.getElementById('cg'), ctt=document.getElementById('ctt');
+var csl=document.getElementById('csl'), cslb=csl?csl.querySelector('i'):null,
+    cslv=document.getElementById('cslv'), cslDrag=false;
 function pad2(n){return n<10?'0'+n:''+n;}
 function todayKey(){var d=new Date();return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate());}
 var TODAY=todayKey();
@@ -932,9 +1319,9 @@ function monthCells(y,m){
   var dow=new Date(y,m-1,1).getDay(), total=new Date(y,m,0).getDate(), h='';
   for(var i=0;i<dow;i++) h+='<span class="cd pad"></span>';
   for(var d=1;d<=total;d++){
-    var k=y+'-'+pad2(m)+'-'+pad2(d), c=DAYS[k];
+    var k=y+'-'+pad2(m)+'-'+pad2(d), c=DAYS[k], pg=PGS[k];
     var cls='cd'+(k===TODAY?' today':'');
-    h+= c ? '<a class="'+cls+'" href="#d'+k+'" title="'+c+' 条">'+d+'</a>'
+    h+= c ? '<a class="'+cls+'" data-d="'+k+'" href="'+(pg?pg+'#d'+k:'#d'+k)+'">'+d+'</a>'
           : '<span class="'+cls+'">'+d+'</span>';
   }
   return h;
@@ -951,13 +1338,102 @@ function buildCal(){
   grid.innerHTML=h;
 }
 buildCal();
+
+/* 悬停浮层：这天有多少条 */
+function tipShow(a){
+  var k=a.dataset.d||'', c=DAYS[k]||0, pg=PGS[k];
+  ctt.innerHTML='<div><b>'+k+'</b> <span class="s">'+c+' 条消息</span></div>'
+    + '<div class="s" style="margin-top:4px">点日期跳到那天'
+    + (pg?'（在另一分片）':'')+'</div>';
+  ctt.classList.add('on');
+  var r=a.getBoundingClientRect(), w=ctt.offsetWidth, hh=ctt.offsetHeight;
+  var left=Math.min(Math.max(8, r.left+r.width/2-w/2), innerWidth-w-8);
+  var top=r.bottom+6;
+  if(top+hh>innerHeight-8) top=Math.max(8, r.top-hh-6);
+  ctt.style.left=left+'px'; ctt.style.top=top+'px';
+}
+grid.addEventListener('mouseover',function(e){
+  var a=e.target.closest('a.cd');
+  if(a) tipShow(a); else ctt.classList.remove('on');
+});
+grid.addEventListener('mouseleave',function(){ctt.classList.remove('on');});
+
+/* 右侧滑块：拖动时实时显示当前年月 */
+function cslLayout(){
+  if(!csl||!cslb) return;
+  if(!grid.clientHeight) return;
+  csl.style.top=grid.offsetTop+'px';
+  csl.style.height=grid.clientHeight+'px';
+  cslSync();
+}
+function cslSync(){
+  if(!csl||!cslb) return;
+  var track=csl.clientHeight, sh=grid.scrollHeight, ch=grid.clientHeight;
+  if(!track||!sh) return;
+  var hh=Math.max(18, Math.round(track*ch/sh));
+  if(hh>track) hh=track;
+  cslb.style.height=hh+'px';
+  var max=sh-ch, span=track-hh;
+  cslb.style.top=((max>0&&span>0)? (grid.scrollTop/max)*span : 0)+'px';
+}
+function curLabel(){
+  var top=grid.getBoundingClientRect().top, hs=grid.querySelectorAll('.cmh'), out='';
+  for(var i=0;i<hs.length;i++){
+    if(hs[i].getBoundingClientRect().top-top<=4) out=hs[i].textContent; else break;
+  }
+  return out || (hs[0]?hs[0].textContent:'');
+}
+function cslLabel(){
+  if(!cslv||!cslb) return;
+  cslv.textContent=curLabel();
+  cslv.style.top=(parseFloat(cslb.style.top||'0')+cslb.offsetHeight/2)+'px';
+}
+function cslTo(clientY){
+  var r=csl.getBoundingClientRect(), hh=cslb.offsetHeight, span=r.height-hh;
+  var y=Math.max(0, Math.min(span, clientY-r.top-hh/2));
+  var max=grid.scrollHeight-grid.clientHeight;
+  grid.scrollTop=(span>0? y/span : 0)*(max>0?max:0);
+  cslSync();
+  cslLabel();
+}
+if(csl){
+  csl.addEventListener('pointerdown',function(e){
+    if(e.pointerType==='mouse' && e.button!==0) return;
+    cslDrag=true; csl.classList.add('on');
+    try{csl.setPointerCapture(e.pointerId);}catch(_e){}
+    cslTo(e.clientY);
+    e.preventDefault(); e.stopPropagation();
+  });
+  csl.addEventListener('pointermove',function(e){
+    if(!cslDrag) return;
+    cslTo(e.clientY);
+    e.preventDefault();
+  });
+  function cslEnd(e){
+    if(!cslDrag) return;
+    cslDrag=false;
+    csl.classList.remove('on');
+    try{csl.releasePointerCapture(e.pointerId);}catch(_e){}
+  }
+  csl.addEventListener('pointerup',cslEnd);
+  csl.addEventListener('pointercancel',cslEnd);
+  csl.addEventListener('lostpointercapture',function(){cslDrag=false;csl.classList.remove('on');});
+  grid.addEventListener('scroll',function(){cslSync(); if(cslDrag) cslLabel();});
+  window.addEventListener('resize',cslLayout);
+}
+
 dbtn.addEventListener('click',function(e){
   dpanel.classList.toggle('on');
-  if(dpanel.classList.contains('on')) grid.scrollTop=grid.scrollHeight;
+  if(dpanel.classList.contains('on')){
+    grid.scrollTop=grid.scrollHeight;
+    setTimeout(cslLayout,0);
+  }else{
+    ctt.classList.remove('on');
+  }
   e.stopPropagation();
 });
 dpanel.addEventListener('click',function(e){
-  if(e.target.closest('a.cd')) dpanel.classList.remove('on');
+  if(e.target.closest('a.cd')){dpanel.classList.remove('on'); ctt.classList.remove('on');}
 });
 </script>
 <script>(function(){var box=document.getElementById('thm');if(!box)return;
@@ -970,7 +1446,7 @@ document.documentElement.setAttribute('data-theme',d?'dark':'light');
 btns.forEach(function(x){x.classList.toggle('on',x.dataset.m===cur)});
 try{localStorage.setItem('wxthm',cur)}catch(e){}}
 apply();btns.forEach(function(x){x.addEventListener('click',function(){cur=x.dataset.m;apply();});});
-if(mq.addEventListener)mq.addEventListener('change',apply);})();</script></body></html>""".replace('__DAYS__', day_json).replace('__Y1__', str(first_dt.year)).replace('__M1__', str(first_dt.month)).replace('__Y2__', str(last_dt.year)).replace('__M2__', str(last_dt.month)))
+if(mq.addEventListener)mq.addEventListener('change',apply);})();</script></body></html>""".replace('__DAYS__', day_json).replace('__PGS__', page_json).replace('__Y1__', str(first_dt.year)).replace('__M1__', str(first_dt.month)).replace('__Y2__', str(last_dt.year)).replace('__M2__', str(last_dt.month)))
     with open(path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(parts))
     return name
@@ -996,7 +1472,7 @@ def main():
     contacts = load_contacts(mm_db) if os.path.exists(mm_db) else {}
     LABEL_OF, LABEL_NAMES = load_labels(mm_db)
     print('标签: %d 个 / 带标签的会话 %d 个' % (len(LABEL_NAMES), len(LABEL_OF)))
-    global MEDIA_ROOT, BK_MEDIA, BF_MEDIA, OG_MAP, VOICE_MAP
+    global MEDIA_ROOT, BK_MEDIA, BF_MEDIA, OG_MAP, VOICE_MAP, VID_THUMB, VID_FILE, BK_VIDEO, FILE_MAP, LOCAL_IMG
     MEDIA_ROOT = os.path.join(out_dir, 'media')
     _vmap = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'voice_map.json')
     if os.path.exists(_vmap):
@@ -1004,6 +1480,26 @@ def main():
         with open(_vmap, encoding='utf-8') as _f:
             VOICE_MAP.update(_jv.load(_f))
         print('备份语音: %d 条' % len(VOICE_MAP))
+    _vidmap = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'video_map.json')
+    if os.path.exists(_vidmap):
+        import json as _jvd
+        with open(_vidmap, encoding='utf-8') as _f:
+            _vd = _jvd.load(_f)
+        VID_THUMB.update(_vd.get('thumbs') or {})
+        VID_FILE.update(_vd.get('files') or {})
+        print('本地视频: 封面 %d / 视频 %d' % (len(VID_THUMB), len(VID_FILE)))
+    _bvmap = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bk_video_map.json')
+    if os.path.exists(_bvmap):
+        import json as _jbv
+        with open(_bvmap, encoding='utf-8') as _fbv:
+            BK_VIDEO.update(_jbv.load(_fbv))
+        print('备份视频: %d 条' % len(BK_VIDEO))
+    _fmap = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'file_map.json')
+    if os.path.exists(_fmap):
+        import json as _jf
+        with open(_fmap, encoding='utf-8') as _ff:
+            FILE_MAP.update(_jf.load(_ff))
+        print('本机文件: %d 个' % len(FILE_MAP))
     _bkmap = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bk_media_map.json')
     if os.path.exists(_bkmap):
         import json as _jm
@@ -1026,6 +1522,8 @@ def main():
     avatar_map = build_avatar_map(msg_dir, os.path.join(out_dir, 'media', 'avatar'))
     self_wxid = read_self_wxid()
     print(f'图片索引: {len(media_idx)} 个 · 头像: {len(avatar_map)} 个 · 本人: {self_wxid}')
+    LOCAL_IMG.update(build_local_img_index(msg_dir, media_idx))
+    print('本机原图映射: %d 条（按会话+时间戳）' % len(LOCAL_IMG))
     conn = sqlite3.connect(msg_db)
     rows = conn.execute("""
         SELECT localId, Type, SubType, IsSender, CreateTime, StrTalker, StrContent, DisplayContent, BytesExtra, CompressContent, MsgSvrID
@@ -1093,6 +1591,20 @@ def main():
     for talker in raw:
         raw[talker].sort(key=lambda r: (r[4], r[0]))
 
+    # 手工排除的会话（只有添加好友记录等，无保留价值）：完全不导出
+    EXCLUDE_TALKERS = {'qy-saien',            # 曲媛
+                       'rdhello09',           # lucky goddess
+                       'wxid_your_account', # 橙子🍊
+                       'wxid_your_account', # Melody
+                       'wxid_your_account', # 青藤-on the way
+                       'wxid_your_account', # 早晨
+                       'wxid_your_account', # 夏洁
+                       'wxid_your_account', # YouMe
+                       'wxid_your_account', # wl3.
+                       'wxid_your_account'} # Too
+    for _t in EXCLUDE_TALKERS:
+        raw.pop(_t, None)
+
     os.makedirs(out_dir, exist_ok=True)
     chat_dir = os.path.join(out_dir, 'chats')
     os.makedirs(chat_dir, exist_ok=True)
@@ -1113,6 +1625,8 @@ def main():
     csv_f = open(os.path.join(out_dir, 'all_messages.csv'), 'w', encoding='utf-8-sig', newline='')
     csv_w = csv.writer(csv_f)
     csv_w.writerow(['会话', '微信号', '发送方', '是否我发的', '时间', '类型', '内容'])
+    md_dir = os.path.join(out_dir, 'md')
+    os.makedirs(md_dir, exist_ok=True)
     CHUNK = 6000
     order = sorted(raw, key=lambda t: -len(raw[t]))
     kws = []
@@ -1133,10 +1647,24 @@ def main():
         name = display_name(talker, contacts)
         base = f'{i:03d}_{safe_name(name, talker)}'
         chunks = [rws[j:j + CHUNK] for j in range(0, len(rws), CHUNK)] or [[]]
+        # 先把「日期 -> 分片」算好：单会话日历要覆盖整个会话，不能只看当前分片
+        all_days, date_file = {}, {}
+        for pi, rpart in enumerate(chunks, 1):
+            _fn = f'{base}.html' if len(chunks) == 1 else f'{base}_p{pi}.html'
+            for x in rpart:
+                _d = datetime.fromtimestamp(x[4]).strftime('%Y-%m-%d')
+                all_days[_d] = all_days.get(_d, 0) + 1
+                if _d not in date_file:
+                    date_file[_d] = 'chats/' + _fn
         files = []
         lastm = None
         thumbs = 0
-        date_file = {}          # 日期 -> 该日期所在分页（首个出现的页）
+        # Markdown 导出：一个会话一个 .md，按分片流式追加
+        md_name = base + '.md'
+        md_f = open(os.path.join(md_dir, md_name), 'w', encoding='utf-8')
+        md_f.write(f'# {name}\n\n- 微信号：{talker}\n- 消息数：{len(rws)}\n'
+                   f'- 时间：{fmt_ts(rws[0][4])} ~ {fmt_ts(rws[-1][4])}\n')
+        md_day = None
         for pi, rpart in enumerate(chunks, 1):
             part = [render_message(x, contacts, None, media_idx, avatar_map, self_wxid)
                     for x in rpart]
@@ -1147,7 +1675,10 @@ def main():
                 nxt = f' · <a href="{base}_p{pi + 1}.html">更晚 →</a>' if pi < len(chunks) else ''
                 nav = f' · 第 {pi}/{len(chunks)} 片{prev}{nxt}'
             write_chat_page(os.path.join(chat_dir, fn), talker, part, contacts, None,
-                            avatar_map.get(talker, ''), nav)
+                            avatar_map.get(talker, ''), nav,
+                            all_days,
+                            {d: f.split('/', 1)[-1] for d, f in date_file.items()
+                             if f != 'chats/' + fn})
             files.append(fn)
             thumbs += sum(1 for m in part if m.get('thumb_only'))
             lastm = part[-1] if part else lastm
@@ -1156,20 +1687,31 @@ def main():
                                'chats/' + fn])
             # 搜索索引只取每会话最近 800 条：93 万条全量会让 index.html 涨到 60MB+
             for m in part[-800:]:
-                body = {'image': '[图片]', 'voice': '[语音]'}.get(m['kind'], m['text'])
+                body = {'image': '[图片]', 'voice': '[语音]', 'video': '[视频]',
+                        'reply': '[回复]', 'music': '[音乐]', 'file': '[文件]',
+                        'record': '[聊天记录]'}.get(m['kind'], m['text'])
                 srch_recs.append([fi, m['time'], m['sender'] or name, body[:120], m['id']])
             for m in part:
                 _pd = datetime.fromtimestamp(m['time']).strftime('%Y-%m-%d')
                 if _pd not in date_file:
                     date_file[_pd] = 'chats/' + fn
-                val = {'image': '[图片]', 'voice': '[语音]'}.get(
+                val = {'image': '[图片]', 'voice': '[语音]', 'video': '[视频]'}.get(
                     m['kind'], re.sub(r'<[^>]+>', '', m['text']))
                 csv_w.writerow([name, talker, m['sender'] or name, '是' if m['is_sender'] else '否',
                                 fmt_ts(m['time']), m['type'], val])
+                if _pd != md_day:
+                    md_f.write('\n## ' + _pd + '\n\n')
+                    md_day = _pd
+                if m['kind'] == 'system':
+                    md_f.write('`' + fmt_ts(m['time']) + '` ' + val.replace('\n', ' ') + '\n\n')
+                else:
+                    _who = '我' if m['is_sender'] else (m['sender'] or name)
+                    md_f.write('**' + fmt_ts(m['time'])[11:] + ' ' + _who + '**\n\n' + val + '\n\n')
         if lastm['kind'] in ('image', 'voice'):
-            last_plain = '[图片]' if lastm['kind'] == 'image' else '[语音]'
+            last_plain = {'image': '[图片]', 'voice': '[语音]', 'video': '[视频]'}[lastm['kind']]
         else:
             last_plain = re.sub(r'<[^>]+>', '', lastm['text'])
+        md_f.close()
         _ci = len(index_rows)
         _dc = {}
         for _x in rws:
@@ -1189,6 +1731,7 @@ def main():
             'full': last_plain[:400].replace('\n', ' '),
             'thumbs': thumbs,
             'file': 'chats/' + files[-1],
+            'md': 'md/' + md_name,
             'is_group': talker.endswith('@chatroom'),
             'kind': conv_kind(talker),
             'labels': LABEL_OF.get(talker, []),
@@ -1212,13 +1755,58 @@ def main():
                    and not any(k == r[0] or k in (r[1] or '') for k in kws)]
         bk_only.sort(key=lambda r: -(r[4] or 0))
 
-    GMAP = {'single': 0, 'group': 1, 'service': 2}
+    GMAP = {'single': 0, 'group': 1, 'service': 2, 'work': 3, 'job': 4, 'other': 5,
+            'classmate': 6}
     tr = []
+    work_n = job_n = other_n = classmate_n = 0
     for it in index_rows:
         _k = it.get('kind') or ('group' if it['is_group'] else 'single')
         tag = {'group': '<span class="tag g">群</span>',
                'service': '<span class="tag s">服务号</span>'}.get(_k, '<span class="tag">单聊</span>')
-        lbls = ''.join(f'<span class="ltag">{html.escape(x)}</span>' for x in it.get('labels') or [])
+        _lbs = list(it.get('labels') or [])
+        # 手工补标签（数据库里没有的）：名字 -> 标签列表
+        for _ml in MANUAL_LABELS.get(it['name'], []):
+            if _ml not in _lbs:
+                _lbs.append(_ml)
+        # 分组规则：工作 / 求职 / 其他。标签或备注名命中都算。
+        # 单聊全部参与；服务号（多为 @openim 的企业微信联系人）只按名字归到求职/其他，
+        # 不参与工作（避免「博世会员互动官」这类公众号被误归）。
+        if _k in ('single', 'service'):
+            _nm = it['name'] or ''
+            if (_k == 'single' and (any(x in WORK_LABELS for x in _lbs)
+                                    or any(_nm.startswith(p) for p in WORK_LABELS))):
+                _k = 'work'
+                tag = '<span class="tag">工作</span>'
+                work_n += 1
+            elif (any(x in JOB_LABELS for x in _lbs) or '猎头' in _nm or 'HR' in _nm.upper()):
+                _k = 'job'
+                tag = '<span class="tag">求职</span>'
+                job_n += 1
+            elif (any(k in x for x in _lbs for k in OTHER_LABEL_KEYWORDS)
+                  or any(k in _nm for k in OTHER_NAME_KEYWORDS)):
+                _k = 'other'
+                tag = '<span class="tag">其他</span>'
+                other_n += 1
+            elif any(l.startswith(x) for l in _lbs for x in CLASSMATE_LABELS):
+                _k = 'classmate'
+                tag = '<span class="tag">同学</span>'
+                classmate_n += 1
+            else:
+                _ov = next((g for g, kw in GROUP_OVERRIDES if kw in _nm), None)
+                if _ov:
+                    _k = _ov
+                    tag = {'work': '<span class="tag">工作</span>',
+                           'job': '<span class="tag">求职</span>',
+                           'other': '<span class="tag">其他</span>'}[_ov]
+                    if _ov == 'work':
+                        work_n += 1
+                    elif _ov == 'job':
+                        job_n += 1
+                    else:
+                        other_n += 1
+        it['gnum'] = _k          # 记录最终分组，供下面计数用
+        lbls = ''.join(f'<span class="ltag">{html.escape(x)}</span>'
+                       for x in (it.get('labels') or []))
         if it.get('avatar'):
             ava = f'<img class="ava-sm" src="media/avatar/{it["avatar"]}" alt="">'
         else:
@@ -1227,8 +1815,11 @@ def main():
         has_bk = it['talker'] in bk_talkers
         src = '本机+备份' if (has_pc and has_bk) else ('仅备份' if has_bk else '本机')
         bk_cell = f'<td class="bkc" data-v="{src}">{src}</td>'
-        tr.append(f"""<tr data-n="{html.escape(it['name'] + ' ' + it['talker'], quote=True)}" data-g="{GMAP[_k]}" data-l="{html.escape('|'.join(it.get('labels') or []), quote=True)}"><td data-v="{html.escape(it['name'])}">{ava}<a href="{html.escape(it['file'])}">{html.escape(it['name'])}</a> {tag}{lbls}</td>
-<td class="num" data-t="num" data-v="{it['count']}">{it['count']}</td><td class="num" data-t="num" data-v="{it['thumbs']}">{it['thumbs'] or '—'}</td><td class="dt" data-v="{it['end']}">{it['end'][:10]}</td>{bk_cell}<td data-v="{html.escape(it['full'])}"><span class="ellip" title="{html.escape(it['full'])}">{html.escape(it['last'])}</span></td></tr>""")
+        md_cell = (f'<td class="mdc"><a class="mdbtn" href="{html.escape(it["md"], quote=True)}"'
+                   f' download="{html.escape(os.path.basename(it["md"]), quote=True)}"'
+                   f' title="下载该会话全部聊天记录（Markdown）">MD</a></td>')
+        tr.append(f"""<tr data-n="{html.escape(it['name'] + ' ' + it['talker'], quote=True)}" data-g="{GMAP[_k]}" data-l="{html.escape('|'.join(_lbs), quote=True)}"><td data-v="{html.escape(it['name'])}">{ava}<a href="{html.escape(it['file'])}">{html.escape(it['name'])}</a> {tag}{lbls}</td>
+<td class="num" data-t="num" data-v="{it['count']}">{it['count']}</td><td class="num" data-t="num" data-v="{it['thumbs']}">{it['thumbs'] or '—'}</td><td class="dt" data-v="{it['end']}">{it['end'][:10]}</td>{bk_cell}<td data-v="{html.escape(it['full'])}"><span class="ellip" title="{html.escape(it['full'])}">{html.escape(it['last'])}</span></td>{md_cell}</tr>""")
 
     _lcount = {}
     for it in index_rows:
@@ -1242,9 +1833,10 @@ def main():
     lbl_sel += '</select>'
 
     total = sum(it['count'] for it in index_rows)
-    n_group = sum(1 for it in index_rows if it.get('kind') == 'group')
-    n_service = sum(1 for it in index_rows if it.get('kind') == 'service')
-    n_single = len(index_rows) - n_group - n_service
+    n_class = sum(1 for it in index_rows if it.get('gnum') == 'classmate')
+    n_group = sum(1 for it in index_rows if it.get('gnum') == 'group')
+    n_service = sum(1 for it in index_rows if it.get('gnum') == 'service')
+    n_single = sum(1 for it in index_rows if it.get('gnum') == 'single')
 
     bk_bar = bk_det = ''
     if bk_sum:
@@ -1283,16 +1875,17 @@ def main():
 <div class="thmseg" id="thm"><button data-m="auto" title="跟随系统">🌗</button><button data-m="light" title="浅色模式">☀️</button><button data-m="dark" title="深色模式">🌙</button></div>
 <button class="tbtn ybtn" id="ybtn" title="年度统计：每年每月聊得最多的人">📊</button>
 <button class="tbtn cbtn" id="cbtn" title="按日期查找：悬停看当天和谁聊了多少条">📅</button>
-<div class="dpanel dpy" id="ypanel"><div class="yp-head">年度统计 · 每月聊天最多的人</div><div class="dp-body" id="yg"></div></div>
+<div class="dpanel dpy" id="ypanel"><div class="yp-head">年度统计 · 每月聊天最多的人</div><div class="yp-s" id="yps"><input id="ypq" type="text" autocomplete="off" placeholder="搜索单聊对象，看他的按月分布…"><button class="x" id="ypx" title="清空">×</button></div><div class="dp-body" id="yg"></div></div>
 <div class="dpanel dpcal" id="cpanel">
 <div class="ctabs"><button class="ctb" data-g="all">全部</button><button class="ctb on" data-g="0">单聊</button><button class="ctb" data-g="1">群聊</button></div>
 <div class="dp-head"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
 <div class="dp-body" id="cg"></div>
+<div class="csl" id="csl" title="拖动快速定位月份"><i></i><b id="cslv"></b></div>
 </div>
 <div class="ctt" id="ctt"></div></header>
 <div class="wrap"><input type="search" id="q" placeholder="搜会话名 / 微信号 / 聊天内容关键字…" autocomplete="off">
 {bk_bar}
-<div class="tabs"><button class="tb" data-g="all">全部 <b>{len(index_rows)}</b></button><button class="tb on" data-g="0">单聊 <b>{n_single}</b></button><button class="tb" data-g="1">群聊 <b>{n_group}</b></button><button class="tb" data-g="2" title="公众号 / 企业微信服务号 / 系统账号（文件传输助手等）">服务号 <b>{n_service}</b></button>{lbl_sel}</div>
+<div class="tabs"><button class="tb" data-g="all">全部 <b>{len(index_rows)}</b></button><button class="tb on" data-g="0">单聊 <b>{n_single}</b></button><button class="tb" data-g="3" title="博世 / 蔚来 / 安财 / 前同事 等单聊">工作 <b>{work_n}</b></button><button class="tb" data-g="4" title="猎头 / HR / offer 等单聊">求职 <b>{job_n}</b></button><button class="tb" data-g="6" title="初中 / 大工 / 东工大 / 材日1001 / 熊井村石研 等同学">同学 <b>{n_class}</b></button><button class="tb" data-g="5" title="租房、快递、商家服务等杂项">其他 <b>{other_n}</b></button><button class="tb" data-g="1">群聊 <b>{n_group}</b></button><button class="tb" data-g="2" title="公众号 / 企业微信服务号 / 系统账号（文件传输助手等）">服务号 <b>{n_service}</b></button>{lbl_sel}</div>
 <table id="t"><thead><tr>
 <th data-col="0">会话<span class="ar"></span></th>
 <th data-col="1" class="sorted desc">消息数<span class="ar">▼</span></th>
@@ -1300,6 +1893,7 @@ def main():
 <th data-col="3">最近<span class="ar"></span></th>
 <th data-col="4" title="本机微信数据库 / 手机备份（BAK_0_TEXT）">来源<span class="ar"></span></th>
 <th data-col="5">最后一条<span class="ar"></span></th>
+<th>导出</th>
 </tr></thead>
 <tbody>{''.join(tr)}</tbody></table>
 {bk_det}
@@ -1317,7 +1911,7 @@ document.body.dataset.tab=tabG;
 const tabs=[...document.querySelectorAll('.tb')];
 tabs.forEach(function(b){{b.addEventListener('click',function(){{
   tabs.forEach(function(x){{x.classList.remove('on');}});
-  b.classList.add('on'); tabG=b.dataset.g; document.body.dataset.tab=tabG; run();
+  b.classList.add('on'); tabG=b.dataset.g; document.body.dataset.tab=tabG; rebuildLbl(); run();
 }});}});
 const T=R.map(function(x){{return String(x[3]).toLowerCase();}});
 
@@ -1354,6 +1948,23 @@ function hl(s,kw){{const i=s.toLowerCase().indexOf(kw);if(i<0)return esc(s);
 
 let timer=null;
 const lblSel=document.getElementById('lbl');
+/* 标签下拉只显示当前分组里实际存在的标签（切分组时重建） */
+function rebuildLbl(){{
+  const cnt={{}};
+  [...tbody.querySelectorAll('tr')].forEach(function(r){{
+    if(tabG!=='all' && r.dataset.g!==tabG) return;
+    const l=r.dataset.l||'';
+    if(!l) return;
+    l.split('|').forEach(function(x){{ if(x) cnt[x]=(cnt[x]||0)+1; }});
+  }});
+  const cur=lblSel.value;
+  const ks=Object.keys(cnt).sort(function(a,b){{return cnt[b]-cnt[a]||(a<b?-1:1);}});
+  lblSel.innerHTML='<option value="">全部标签</option>'
+    + ks.map(function(k){{return '<option value="'+esc(k)+'">'+esc(k)+' ('+cnt[k]+')</option>';}}).join('');
+  lblSel.style.display=ks.length?'':'none';
+  lblSel.value=(cur&&cnt[cur])?cur:'';
+}}
+rebuildLbl();
 function run(){{
   const raw=q.value.trim(), kw=raw.toLowerCase();
   const lw=lblSel?lblSel.value:'';
@@ -1433,6 +2044,7 @@ function renderCal(){{
     if(a) tipShow(a);
     else {{pinnedDay=null; pinned=false; ctt.classList.remove('on');}}
   }}
+  cslLayout();
 }}
 function scheduleHide(){{
   clearTimeout(hideT);
@@ -1500,6 +2112,7 @@ cbtn.addEventListener('click',function(e){{
   if(cpanel.classList.contains('on')){{
     var a=pinnedDay ? cg.querySelector('a.cd[data-d="'+pinnedDay+'"]') : null;
     if(a) a.scrollIntoView({{block:'center'}}); else cg.scrollTop=0;
+    setTimeout(cslLayout,0);
   }}
   e.stopPropagation();
 }});
@@ -1520,10 +2133,81 @@ document.addEventListener('click',function(e){{
   }}
 }});
 
+/* ---- 右侧滑块：拖动时实时显示当前年月 ---- */
+var csl=document.getElementById('csl'),
+    cslb=csl?csl.querySelector('i'):null,
+    cslv=document.getElementById('cslv'),
+    cslDrag=false;
+
+function cslLayout(){{
+  if(!csl||!cslb||!cg) return;
+  if(!cg.clientHeight) return;                 /* 面板还没显示出来 */
+  csl.style.top=cg.offsetTop+'px';
+  csl.style.height=cg.clientHeight+'px';
+  cslSync();
+}}
+function cslSync(){{
+  if(!csl||!cslb) return;
+  var track=csl.clientHeight, sh=cg.scrollHeight, ch=cg.clientHeight;
+  if(!track||!sh) return;
+  var hh=Math.max(18, Math.round(track*ch/sh));
+  if(hh>track) hh=track;
+  cslb.style.height=hh+'px';
+  var max=sh-ch, span=track-hh;
+  cslb.style.top=((max>0&&span>0)? (cg.scrollTop/max)*span : 0)+'px';
+}}
+/* 视口顶部对应的是哪个月（.cmh 是顺序排列的月份标题） */
+function curLabel(){{
+  var top=cg.getBoundingClientRect().top, hs=cg.querySelectorAll('.cmh'), out='';
+  for(var i=0;i<hs.length;i++){{
+    if(hs[i].getBoundingClientRect().top-top<=4) out=hs[i].textContent; else break;
+  }}
+  return out || (hs[0]?hs[0].textContent:'');
+}}
+function cslLabel(){{
+  if(!cslv||!cslb) return;
+  cslv.textContent=curLabel();
+  cslv.style.top=(parseFloat(cslb.style.top||'0')+cslb.offsetHeight/2)+'px';
+}}
+function cslTo(clientY){{
+  var r=csl.getBoundingClientRect(), hh=cslb.offsetHeight, span=r.height-hh;
+  var y=Math.max(0, Math.min(span, clientY-r.top-hh/2));
+  var max=cg.scrollHeight-cg.clientHeight;
+  cg.scrollTop=(span>0? y/span : 0)*(max>0?max:0);
+  cslSync();
+  cslLabel();
+}}
+if(csl){{
+  csl.addEventListener('pointerdown',function(e){{
+    if(e.pointerType==='mouse' && e.button!==0) return;
+    cslDrag=true; csl.classList.add('on');
+    try{{csl.setPointerCapture(e.pointerId);}}catch(_e){{}}
+    cslTo(e.clientY);
+    e.preventDefault(); e.stopPropagation();
+  }});
+  csl.addEventListener('pointermove',function(e){{
+    if(!cslDrag) return;
+    cslTo(e.clientY);
+    e.preventDefault();
+  }});
+  function cslEnd(e){{
+    if(!cslDrag) return;
+    cslDrag=false;
+    csl.classList.remove('on');
+    try{{csl.releasePointerCapture(e.pointerId);}}catch(_e){{}}
+  }}
+  csl.addEventListener('pointerup',cslEnd);
+  csl.addEventListener('pointercancel',cslEnd);
+  csl.addEventListener('lostpointercapture',function(){{cslDrag=false;csl.classList.remove('on');}});
+  cg.addEventListener('scroll',function(){{cslSync(); if(cslDrag) cslLabel();}});
+  window.addEventListener('resize',cslLayout);
+}}
+
 /* ---- 年度统计：每年每月聊得最多的人（只算单聊）---- */
 (function(){{
   var ybtn=document.getElementById('ybtn'), ypanel=document.getElementById('ypanel'),
-      yg=document.getElementById('yg');
+      yg=document.getElementById('yg'), yps=document.getElementById('yps'),
+      ypq=document.getElementById('ypq'), ypx=document.getElementById('ypx');
   if(!ybtn||!ypanel||!yg) return;
 
   /* 聚合：年-月 -> {{会话索引: 条数}}；同时记下该月每个会话最早出现的日期及其分页
@@ -1540,43 +2224,164 @@ document.addEventListener('click',function(e){{
     }}
   }});
 
-  var years={{}};
-  Object.keys(YM).forEach(function(ym){{
-    var y=ym.slice(0,4); (years[y]||(years[y]=[])).push(ym);
-  }});
+  var YMS=Object.keys(YM).sort();          /* 升序：2021-02 … 2026-10 */
 
-  var h='';
-  Object.keys(years).sort().forEach(function(y){{
-    var rows=[], max=0;
-    for(var m=1;m<=12;m++){{
-      var key=y+'-'+(m<10?'0'+m:''+m), o=YM[key];
-      var best=-1, bc=0, k;
-      if(o) for(k in o){{ if(o[k]>bc){{ bc=o[k]; best=+k; }} }}
-      if(bc>max) max=bc;
-      rows.push({{m:m, bc:bc, best:best, tot:(YTOT[key]||0)}});
-    }}
-    var ytot=rows.reduce(function(a,r){{return a+r.tot;}},0);
-    if(!ytot) return;
-    h+='<div class="yp-y"><span>'+y+' 年</span><i>共 '+ytot.toLocaleString()+' 条</i></div>';
-    rows.forEach(function(r){{
-      if(!r.tot){{
-        h+='<div class="yp-r off"><span class="yp-m">'+r.m+'月</span>'
-         + '<span class="yp-b"><i style="width:0"></i></span>'
-         + '<span class="yp-c">—</span><span class="yp-n"></span></div>';
-        return;
-      }}
-      var c=CONV[r.best]||['?','#'], w=Math.max(3, Math.round(r.bc/max*100));
-      var fd=(FIRST[y+'-'+(r.m<10?'0'+r.m:''+r.m)]||{{}})[r.best];
-      var href = fd ? (fd[1]+'#d'+fd[0]) : c[1];
-      h+='<div class="yp-r" title="'+esc(c[0])+' · '+r.bc.toLocaleString()+' 条（当月单聊共 '
-       + r.tot.toLocaleString()+' 条）'+(fd?'，点击从 '+fd[0]+' 开始':'')+'">'
-       + '<span class="yp-m">'+r.m+'月</span>'
-       + '<span class="yp-b"><i style="width:'+w+'%"></i></span>'
-       + '<span class="yp-c">'+r.bc.toLocaleString()+'</span>'
-       + '<a class="yp-n" href="'+href+'">'+esc(c[0])+'</a></div>';
+  /* ---- 视图一：每年每月聊得最多的人 ---- */
+  function renderYear(){{
+    var years={{}};
+    YMS.forEach(function(ym){{
+      var y=ym.slice(0,4); (years[y]||(years[y]=[])).push(ym);
     }});
+    var h='';
+    Object.keys(years).sort().forEach(function(y){{
+      var rows=[], max=0;
+      for(var m=1;m<=12;m++){{
+        var key=y+'-'+(m<10?'0'+m:''+m), o=YM[key];
+        var best=-1, bc=0, k;
+        if(o) for(k in o){{ if(o[k]>bc){{ bc=o[k]; best=+k; }} }}
+        if(bc>max) max=bc;
+        rows.push({{m:m, key:key, bc:bc, best:best, tot:(YTOT[key]||0)}});
+      }}
+      var ytot=rows.reduce(function(a,r){{return a+r.tot;}},0);
+      if(!ytot) return;
+      h+='<div class="yp-y"><span>'+y+' 年</span><i>共 '+ytot.toLocaleString()+' 条</i></div>';
+      rows.forEach(function(r){{
+        if(!r.tot){{
+          h+='<div class="yp-r off"><span class="yp-m">'+r.m+'月</span>'
+           + '<span class="yp-b"><i style="width:0"></i></span>'
+           + '<span class="yp-c">—</span><span class="yp-n"></span></div>';
+          return;
+        }}
+        var c=CONV[r.best]||['?','#'], w=Math.max(3, Math.round(r.bc/max*100));
+        var fd=(FIRST[r.key]||{{}})[r.best];
+        var href = fd ? (fd[1]+'#d'+fd[0]) : c[1];
+        h+='<div class="yp-r" data-k="'+r.key+'" title="'+esc(c[0])+' · '+r.bc.toLocaleString()
+         + ' 条（当月单聊共 '+r.tot.toLocaleString()+' 条）'
+         + (fd?'，点名字从 '+fd[0]+' 开始':'')+' · 点这行展开当月明细">'
+         + '<span class="yp-m">'+r.m+'月</span>'
+         + '<span class="yp-b"><i style="width:'+w+'%"></i></span>'
+         + '<span class="yp-c">'+r.bc.toLocaleString()+'</span>'
+         + '<a class="yp-n" href="'+href+'">'+esc(c[0])+'</a></div>';
+      }});
+    }});
+    yg.innerHTML=h || '<div class="yp-empty">没有可统计的单聊记录</div>';
+  }}
+
+  function ptotal(ci){{
+    var t=0;
+    for(var j=0;j<YMS.length;j++) t+=(YM[YMS[j]][ci]||0);
+    return t;
+  }}
+
+  /* ---- 视图二：指定对象的按月分布（跨全部年份，条数按他自己的峰值缩放）---- */
+  function renderPerson(ci){{
+    var c=CONV[ci]||['?','#'], rows=[], tot=0, max=0;
+    YMS.forEach(function(ym){{
+      var n=YM[ym][ci];
+      if(!n) return;
+      rows.push({{ym:ym, n:n, fd:(FIRST[ym]||{{}})[ci]}});
+      tot+=n;
+      if(n>max) max=n;
+    }});
+    if(!rows.length){{
+      yg.innerHTML='<div class="yp-empty">没有与「'+esc(c[0])+'」的单聊记录</div>';
+      return;
+    }}
+    var h='<div class="yp-sum"><b>'+esc(c[0])+'</b> · 共 '+tot.toLocaleString()+' 条 · '
+      + rows[0].ym+' ~ '+rows[rows.length-1].ym+' · '+rows.length+' 个月有聊天</div>';
+    var cy=null;
+    rows.forEach(function(r){{
+      var y=r.ym.slice(0,4), m=+r.ym.slice(5,7);
+      if(y!==cy){{
+        var yt=0;
+        for(var j=0;j<rows.length;j++) if(rows[j].ym.slice(0,4)===y) yt+=rows[j].n;
+        h+='<div class="yp-y"><span>'+y+' 年</span><i>共 '+yt.toLocaleString()+' 条</i></div>';
+        cy=y;
+      }}
+      var w=Math.max(3, Math.round(r.n/max*100));
+      var href = r.fd ? (r.fd[1]+'#d'+r.fd[0]) : c[1];
+      h+='<div class="yp-r" title="'+r.ym+' 共 '+r.n.toLocaleString()+' 条'
+       + (r.fd?'，点击从 '+r.fd[0]+' 开始':'')+'">'
+       + '<span class="yp-m">'+m+'月</span>'
+       + '<span class="yp-b"><i style="width:'+w+'%"></i></span>'
+       + '<span class="yp-c">'+r.n.toLocaleString()+'</span>'
+       + (r.fd?'<a class="yp-n" href="'+href+'">'+r.fd[0].slice(5)+' 起</a>'
+              :'<span class="yp-n"></span>')+'</div>';
+    }});
+    yg.innerHTML=h;
+  }}
+
+  /* ---- 搜索 ---- */
+  function onQuery(){{
+    var q=(ypq.value||'').trim();
+    yps.classList.toggle('has', !!q);
+    if(!q){{ renderYear(); return; }}
+    var ql=q.toLowerCase(), hs=[];
+    for(var i=0;i<CONV.length;i++){{
+      var c=CONV[i];
+      if(!c || c[2]===1 || !c[0]) continue;        /* 只搜单聊 */
+      if(c[0].toLowerCase().indexOf(ql)>=0) hs.push(i);
+    }}
+    if(!hs.length){{
+      yg.innerHTML='<div class="yp-empty">没有匹配「'+esc(q)+'」的单聊对象</div>';
+      return;
+    }}
+    if(hs.length===1){{ renderPerson(hs[0]); return; }}
+    hs.sort(function(a,b){{ return ptotal(b)-ptotal(a); }});
+    var h='<div class="yp-sum">匹配到 <b>'+hs.length+'</b> 个单聊对象，点一个看按月分布</div>';
+    hs.slice(0,100).forEach(function(i){{
+      h+='<div class="yp-hit" data-ci="'+i+'"><span class="yp-n" style="width:auto;flex:1">'
+       + esc(CONV[i][0])+'</span><span class="yp-c">'+ptotal(i).toLocaleString()+'</span></div>';
+    }});
+    yg.innerHTML=h;
+  }}
+
+  /* 某个月的完整明细：谁占了多少条 */
+  function monthDetail(key){{
+    var o=YM[key]||{{}}, arr=[];
+    for(var k in o) arr.push([+k, o[k]]);
+    arr.sort(function(a,b){{ return b[1]-a[1]; }});
+    var tot=0, i;
+    for(i=0;i<arr.length;i++) tot+=arr[i][1];
+    var mx=arr.length?arr[0][1]:0;
+    var h='<div class="yp-d"><div class="yp-dh">'+key.slice(0,4)+'年'+(+key.slice(5))+'月 · 单聊共 '
+        + tot.toLocaleString()+' 条 · '+arr.length+' 人</div>';
+    for(i=0;i<arr.length && i<15;i++){{
+      var x=arr[i], c=CONV[x[0]]||['?','#'], fd=(FIRST[key]||{{}})[x[0]];
+      var href=fd?(fd[1]+'#d'+fd[0]):c[1];
+      var w=Math.max(2, Math.round(x[1]/mx*100));
+      h+='<a class="yp-dr" href="'+href+'">'
+       + '<span class="yp-dn">'+esc(c[0])+'</span>'
+       + '<span class="yp-db"><i style="width:'+w+'%"></i></span>'
+       + '<span class="yp-dc">'+x[1].toLocaleString()+'</span>'
+       + '<span class="yp-dp">'+Math.round(x[1]/tot*100)+'%</span></a>';
+    }}
+    if(arr.length>15) h+='<div class="yp-dm">还有 '+(arr.length-15)+' 人，再点月份行收起</div>';
+    return h+'</div>';
+  }}
+
+  yg.addEventListener('click',function(e){{
+    var el=e.target.closest('.yp-hit');
+    if(el){{ renderPerson(+el.dataset.ci); e.preventDefault(); return; }}
+    if(e.target.closest('a.yp-n')||e.target.closest('a.yp-dr')) return;  /* 名字是链接，照常跳转 */
+    var r=e.target.closest('.yp-r');
+    if(!r || r.classList.contains('off') || !r.dataset.k) return;
+    e.preventDefault();
+    var nx=r.nextElementSibling;
+    if(nx && nx.classList.contains('yp-d')){{
+      nx.parentNode.removeChild(nx); r.classList.remove('op'); return;
+    }}
+    var olds=yg.querySelectorAll('.yp-d'), i;
+    for(i=0;i<olds.length;i++) olds[i].parentNode.removeChild(olds[i]);
+    var ops=yg.querySelectorAll('.yp-r.op');
+    for(i=0;i<ops.length;i++) ops[i].classList.remove('op');
+    r.insertAdjacentHTML('afterend', monthDetail(r.dataset.k));
+    r.classList.add('op');
   }});
-  yg.innerHTML=h;
+  ypq.addEventListener('input', onQuery);
+  ypx.addEventListener('click', function(){{ ypq.value=''; ypx.blur(); onQuery(); }});
+
+  renderYear();
   ybtn.addEventListener('click',function(e){{
     ypanel.classList.toggle('on');
     cpanel.classList.remove('on');
@@ -1615,6 +2420,9 @@ if(mq.addEventListener)mq.addEventListener('change',apply);}})();</script></body
                         it['count'], it['start'], it['end']])
 
     print(f'完成: {len(index_rows)} 个会话, {total} 条消息')
+    _tt = sum(r['thumbs'] for r in index_rows)
+    print('图片：缺原图（只有缩略图）%d 张 · 备份原图 %d · 备份视频 %d' % (
+        _tt, len(BF_MEDIA), len(BK_VIDEO)))
     print('入口:', os.path.join(out_dir, 'index.html'))
 
 
